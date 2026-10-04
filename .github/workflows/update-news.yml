@@ -41,4 +41,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4' # la acción instala 3.x por defecto, que no soporta Workers solo con assets
           command: deploy

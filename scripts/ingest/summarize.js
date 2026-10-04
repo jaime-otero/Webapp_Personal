@@ -18,9 +18,10 @@ function buildPrompt(stories) {
 cada una con los titulares de los medios que la cubren. Escribe SIEMPRE en español, con tono neutral y sin inventar
 datos que no aparezcan en el texto. Si los medios discrepan, dilo.
 
-Devuelve JSON con esta forma exacta:
+Devuelve JSON con esta forma exacta, con UNA entrada en "stories" por CADA noticia de la lista
+(${stories.length} en total, en el mismo orden):
 {"briefing": "3-6 frases que resuman lo más importante del momento",
- "stories": [{"id": "<id>", "resumen": "2-3 frases en español"}]}
+ "stories": [{"i": <número entre corchetes>, "id": "<id>", "resumen": "2-3 frases en español"}]}
 
 Noticias:
 ${list}`;
@@ -31,7 +32,7 @@ export async function summarize(stories, { apiKey = process.env.GEMINI_API_KEY }
 
   const body = JSON.stringify({
     contents: [{ role: 'user', parts: [{ text: buildPrompt(stories) }] }],
-    generationConfig: { responseMimeType: 'application/json', temperature: 0.3 },
+    generationConfig: { responseMimeType: 'application/json', temperature: 0.3, maxOutputTokens: 16384 },
   });
   let res;
   let model;
@@ -52,8 +53,12 @@ export async function summarize(stories, { apiKey = process.env.GEMINI_API_KEY }
   const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') ?? '';
   const parsed = JSON.parse(text.replace(/^```(?:json)?|```$/g, '').trim());
   const summaries = {};
+  const ids = new Set(stories.map((s) => s.id));
   for (const item of parsed.stories ?? []) {
-    if (item?.id && typeof item.resumen === 'string') summaries[item.id] = item.resumen;
+    if (typeof item?.resumen !== 'string') continue;
+    // Models sometimes mangle the opaque id; fall back to the list index.
+    const id = ids.has(item.id) ? item.id : stories[item.i]?.id;
+    if (id) summaries[id] = item.resumen;
   }
   return { briefing: typeof parsed.briefing === 'string' ? parsed.briefing : null, summaries, model };
 }
