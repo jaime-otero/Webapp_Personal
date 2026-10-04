@@ -1,10 +1,14 @@
-import { TOPICS, loadProfile, saveProfile, pruneProfile, defaultProfile } from './lib/profile.js';
-import { rankStories, learn } from './lib/rank.js';
+import { loadProfile, saveProfile, pruneProfile, defaultProfile, migrate, isOn, listOf, setFlag, toRemote, mergeProfiles } from './lib/profile.js';
+import { rankStories, train, topFeatures, featureLabel, sectionPref, emptyModel } from './lib/rank.js';
+import { SECTIONS, SECTION_BY_ID, sectionLabel } from './lib/taxonomy.js';
+import { isSpoiler } from './lib/spoilers.js';
 
 const PAGE = 30;
-const state = { data: null, profile: pruneProfile(loadProfile()), view: 'foryou', limit: PAGE };
+const SESSION = Date.now();
+const state = { data: null, profile: pruneProfile(loadProfile()), route: { view: 'foryou' }, limit: PAGE, revealed: new Set() };
 const $main = document.getElementById('main');
 const $tabs = document.getElementById('tabs');
+const $subtabs = document.getElementById('subtabs');
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const safeUrl = (u) => (/^https?:\/\//i.test(u ?? '') ? u : '#');
@@ -18,9 +22,40 @@ function timeAgo(iso) {
   return rtf.format(Math.round(mins / 1440), 'day');
 }
 
-function persist() {
-  saveProfile(state.profile);
+function toast(text) {
+  const el = Object.assign(document.createElement('div'), { className: 'toast', textContent: text, role: 'status' });
+  document.body.append(el);
+  setTimeout(() => el.remove(), 2600);
 }
+
+// prefs = an explicit preference changed (decides which copy wins when syncing).
+function persist({ prefs = false, sync = true } = {}) {
+  const now = Date.now();
+  state.profile.updatedAt = now;
+  if (prefs) state.profile.prefsAt = now;
+  saveProfile(state.profile);
+  if (sync) scheduleSync();
+}
+
+const sourceNames = () => Object.fromEntries((state.data?.sources ?? []).map((s) => [s.id, s.name]));
+
+// ---------- routing ----------
+
+function parseRoute() {
+  const h = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
+  const [view, sec, sub] = h.split('/');
+  if (view === 's' && SECTION_BY_ID[sec]) return { view: 'section', sec, sub: SECTION_BY_ID[sec].subs.some((s) => s.id === sub) ? sub : null };
+  if (['megusta', 'guardados', 'ajustes'].includes(view)) return { view };
+  return { view: 'foryou' };
+}
+
+window.addEventListener('hashchange', () => {
+  if (location.hash.startsWith('#sync=')) return linkSync(location.hash.slice(6));
+  state.route = parseRoute();
+  state.limit = PAGE;
+  render();
+  window.scrollTo({ top: 0 });
+});
 
 // ---------- data ----------
 
@@ -35,33 +70,78 @@ async function loadData() {
   }
   document.getElementById('updated').textContent = `Actualizado ${timeAgo(state.data.generatedAt)}`;
   render();
-  if (!state.profile.onboarded) openOnboarding();
+  if (!state.profile.onboarded && !location.hash.startsWith('#sync=')) openOnboarding();
 }
 
-const findStory = (id) => state.data?.stories.find((s) => s.id === id) ?? state.profile.saved[id];
+const findStory = (id) => state.data?.stories.find((s) => s.id === id) ?? state.profile.liked[id]?.d ?? state.profile.saved[id]?.d;
+const inSection = (story, key) => (story.sections ?? []).some((s) => s === key || s.startsWith(`${key}/`));
 
 // ---------- views ----------
 
+const href = (route) => (route.view === 'section' ? `#/s/${route.sec}${route.sub ? `/${route.sub}` : ''}` : route.view === 'foryou' ? '#/' : `#/${route.view}`);
+
 function tabsHtml() {
-  const tabs = [['foryou', 'Para ti'], ['briefing', 'Resumen IA']];
-  for (const [t, label] of Object.entries(TOPICS)) if ((state.profile.topics[t] ?? 1) > -2) tabs.push([`topic:${t}`, label]);
-  tabs.push(['saved', 'Guardados'], ['settings', 'Ajustes']);
+  const r = state.route;
+  const tabs = [[{ view: 'foryou' }, 'Para ti']];
+  for (const s of SECTIONS) if (sectionPref(state.profile, s.id) > -2) tabs.push([{ view: 'section', sec: s.id }, s.label]);
+  tabs.push([{ view: 'megusta' }, '❤️ Me gusta'], [{ view: 'guardados' }, 'Guardados'], [{ view: 'ajustes' }, 'Ajustes']);
   return tabs
-    .map(([v, label]) => `<button class="tab${state.view === v ? ' active' : ''}" data-view="${v}" ${state.view === v ? 'aria-current="page"' : ''}>${esc(label)}</button>`)
+    .map(([route, label]) => {
+      const active = route.view === r.view && route.sec === r.sec;
+      return `<a class="tab${active ? ' active' : ''}" href="${href(route)}"${active ? ' aria-current="page"' : ''}>${esc(label)}</a>`;
+    })
     .join('');
 }
 
-function storyCard(story) {
+function subtabsHtml() {
+  const r = state.route;
+  if (r.view !== 'section') return '';
+  const sec = SECTION_BY_ID[r.sec];
+  const subs = sec.subs.filter((s) => sectionPref(state.profile, s.key) > -2);
+  return [{ id: null, label: 'Todo' }, ...subs]
+    .map((s) => `<a class="subtab${r.sub === s.id ? ' active' : ''}" href="${href({ view: 'section', sec: r.sec, sub: s.id })}">${esc(s.label)}</a>`)
+    .join('');
+}
+
+// Section chips, skipping the one being browsed; other sections' subsections name their parent.
+function chipsFor(story) {
+  const r = state.route;
+  const current = r.view === 'section' ? (r.sub ? `${r.sec}/${r.sub}` : r.sec) : null;
+  return (story.sections ?? [])
+    .filter((k) => k !== current)
+    .slice(0, 2)
+    .map((k) => `<span class="chip">${esc(sectionLabel(k, { withParent: k.includes('/') && k.split('/')[0] !== r.sec }))}</span>`)
+    .join('');
+}
+
+function storyCard(entry) {
+  const story = entry.story ?? entry;
   const p = state.profile;
   const [first, ...rest] = story.sources;
   const read = p.read[story.id] ? ' read' : '';
-  const saved = !!p.saved[story.id];
+
+  if (p.spoilers.nba && !state.revealed.has(story.id) && isSpoiler(story, p.spoilers.extra)) {
+    return `<article class="card spoiler" data-id="${story.id}">
+      <div class="body">
+        <p class="meta"><strong>${esc(first.source)}</strong> · ${timeAgo(story.publishedAt)} <span class="chip">NBA</span></p>
+        <p class="spoiler-msg">🙈 Posible spoiler de la NBA</p>
+        <div class="actions"><button data-act="reveal">Mostrar</button><button data-act="hide">Ocultar</button></div>
+      </div>
+    </article>`;
+  }
+
+  const liked = isOn(p.liked, story.id);
+  const saved = isOn(p.saved, story.id);
   const text = story.aiSummary
     ? `<p class="summary"><span class="badge" title="Resumen generado con IA a partir de los titulares y extractos de los medios">IA</span> ${esc(story.aiSummary)}</p>`
     : story.summary
       ? `<p class="summary">${esc(story.summary)}</p>`
       : '';
-  const topics = story.topics.filter((t) => TOPICS[t] && t !== 'espana').slice(0, 3).map((t) => `<span class="chip">${TOPICS[t]}</span>`).join('');
+  const why = entry.explore
+    ? `<span class="why explore" title="Algo distinto a lo habitual, para que no te pierdas nada importante">✨ Para descubrir</span>`
+    : (entry.reasons ?? []).length
+      ? `<span class="why" title="Por lo que has marcado con me gusta, guardado o leído">♥ ${esc(entry.reasons.join(' · '))}</span>`
+      : '';
   const others = rest.length
     ? `<details class="others"><summary>${rest.length === 1 ? 'También en 1 medio más' : `También en ${rest.length} medios más`}</summary><ul>${rest
         .map((s) => `<li><a href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener" data-open="${story.id}"><strong>${esc(s.source)}</strong> · ${esc(s.title)}</a></li>`)
@@ -70,44 +150,71 @@ function storyCard(story) {
   return `<article class="card${read}" data-id="${story.id}">
     ${story.image ? `<img class="thumb" src="${esc(safeUrl(story.image))}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
     <div class="body">
-      <p class="meta"><strong>${esc(first.source)}</strong>${rest.length ? ` <span class="coverage">+${rest.length}</span>` : ''} · ${timeAgo(story.publishedAt)} ${topics}</p>
+      <p class="meta"><strong>${esc(first.source)}</strong>${rest.length ? ` <span class="coverage">+${rest.length}</span>` : ''} · ${timeAgo(story.publishedAt)} ${chipsFor(story)}</p>
       <h2><a href="${esc(safeUrl(first.url))}" target="_blank" rel="noopener" data-open="${story.id}">${esc(story.title)}</a></h2>
       ${text}
+      ${why}
       ${others}
       <div class="actions">
-        <button data-act="like" title="Más noticias como esta">👍 Más así</button>
-        <button data-act="dislike" title="Menos noticias como esta">👎 Menos</button>
+        <button data-act="like" class="like" aria-pressed="${liked}" title="Me gusta: verás más noticias así">${liked ? '❤️' : '🤍'} Me gusta</button>
+        <button data-act="dislike" title="No me interesa: verás menos noticias así">👎</button>
         <button data-act="save" aria-pressed="${saved}">${saved ? '★ Guardada' : '☆ Guardar'}</button>
-        <button data-act="hide" title="Ocultar esta noticia">Ocultar</button>
+        <button data-act="hide" title="Ocultar solo esta noticia">Ocultar</button>
       </div>
     </div>
   </article>`;
 }
 
-function listHtml(stories, emptyMsg) {
-  if (!stories.length) return `<div class="empty"><p>${emptyMsg}</p></div>`;
-  const page = stories.slice(0, state.limit);
-  return `<div class="list">${page.map(storyCard).join('')}</div>${stories.length > page.length ? `<button class="more" data-act="more">Ver más</button>` : ''}`;
+function listHtml(entries, emptyMsg) {
+  if (!entries.length) return `<div class="empty"><p>${emptyMsg}</p></div>`;
+  const page = entries.slice(0, state.limit);
+  return `<div class="list">${page.map(storyCard).join('')}</div>${entries.length > page.length ? `<button class="more" data-act="more">Ver más</button>` : ''}`;
 }
 
-function briefingHtml() {
-  const b = state.data.briefing;
-  const top = rankStories(state.data.stories.filter((s) => s.aiSummary), state.profile).slice(0, 12);
-  const intro = b
-    ? `<section class="briefing"><h2>Lo importante ahora</h2><p>${esc(b.text)}</p><p class="muted small">Generado con IA ${timeAgo(b.at)} a partir de titulares de ${state.data.sources.filter((s) => s.ok).length} medios. Puede contener errores: abre las fuentes para contrastar.</p></section>`
-    : `<section class="briefing"><h2>Resumen IA</h2><p class="muted">Todavía no hay resumen generado. Se activa al configurar la clave de Gemini (ver README).</p></section>`;
-  return intro + (top.length ? `<h3 class="section-title">Noticias resumidas</h3>${listHtml(top, '')}` : '');
+const collapsed = (() => {
+  try {
+    return new Set(JSON.parse(localStorage.getItem('midiario.collapsed') ?? '[]'));
+  } catch {
+    return new Set();
+  }
+})();
+
+function briefingHtml(key, title) {
+  const b = state.data.briefings?.[key];
+  if (!b) return '';
+  return `<details class="briefing" data-briefing="${key}"${collapsed.has(key) ? '' : ' open'}>
+    <summary><h2>${esc(title)}</h2><span class="badge">IA</span></summary>
+    <p>${esc(b.text)}</p>
+    <p class="muted small">Resumen generado con IA ${timeAgo(b.at)} a partir de los titulares de los medios. Puede contener errores: abre las fuentes para contrastar.</p>
+  </details>`;
+}
+
+function sectionView() {
+  const { sec, sub } = state.route;
+  const key = sub ? `${sec}/${sub}` : sec;
+  const s = SECTION_BY_ID[sec];
+  const briefing = !sub ? briefingHtml(sec, `Lo importante · ${s.label}`) : key === 'eeuu/nba' ? briefingHtml(key, 'Lo importante · NBA (sin resultados)') : '';
+  const stories = state.data.stories.filter((st) => inSection(st, key));
+  return briefing + listHtml(rankStories(stories, state.profile), 'No hay noticias de esta sección ahora mismo.');
 }
 
 function settingsHtml() {
   const p = state.profile;
   const levels = [[-2, 'Ocultar'], [0, 'Poco'], [1, 'Normal'], [2, 'Mucho'], [3, 'Me encanta']];
-  const topicRows = Object.entries(TOPICS)
-    .map(([t, label]) => `<label class="row"><span>${label}</span><select data-topic="${t}">${levels.map(([v, l]) => `<option value="${v}"${(p.topics[t] ?? 1) === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>`)
-    .join('');
-  const byId = new Map();
-  for (const s of state.data.sources) byId.set(s.name, [...(byId.get(s.name) ?? []), s]);
-  const sourceRows = [...byId.entries()]
+  const select = (key, isSub) => {
+    const own = p.sections[key];
+    const opts = (isSub ? [['', 'Como la sección']] : []).concat(levels);
+    const current = own ?? (isSub ? '' : 1);
+    return `<select data-section="${key}">${opts.map(([v, l]) => `<option value="${v}"${String(current) === String(v) ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
+  };
+  const sectionRows = SECTIONS.map(
+    (s) => `<div class="group"><label class="row"><strong>${s.label}</strong>${select(s.id, false)}</label>
+      ${s.subs.map((sub) => `<label class="row sub"><span>${sub.label}</span>${select(sub.key, true)}</label>`).join('')}</div>`,
+  ).join('');
+
+  const byName = new Map();
+  for (const s of state.data.sources) byName.set(s.name, [...(byName.get(s.name) ?? []), s]);
+  const sourceRows = [...byName.entries()]
     .sort(([a], [b]) => a.localeCompare(b, 'es'))
     .map(([name, feeds]) => {
       const v = p.sources[feeds[0].id] ?? 0;
@@ -116,55 +223,78 @@ function settingsHtml() {
         <option value="1"${v === 1 ? ' selected' : ''}>Favorito</option><option value="0"${v === 0 ? ' selected' : ''}>Normal</option><option value="-1"${v === -1 ? ' selected' : ''}>Silenciar</option></select></label>`;
     })
     .join('');
-  const learnedTop = Object.entries(p.learned.terms).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([t]) => t).join(', ');
+
+  const names = sourceNames();
+  const { pos, neg } = topFeatures(p.model);
+  const featChips = (list) =>
+    list.map(([k]) => `<button class="feat" data-forget="${esc(k)}" title="Olvidar">${esc(featureLabel(k, names))} ✕</button>`).join('') || '<span class="muted small">Nada todavía.</span>';
+  const counts = `${listOf(p.liked).length} me gusta · ${listOf(p.saved).length} guardadas · ${Object.keys(p.disliked).length} “no me interesa” · ${p.model.n} señales aprendidas`;
+
+  const sync = p.sync.code
+    ? `<p>Sincronización activada. Abre este enlace en tu otro dispositivo (móvil, PC…) para unirlo:</p>
+       <input class="code" readonly value="${esc(syncLink())}" aria-label="Enlace de sincronización">
+       <div class="actions"><button data-act="sync-copy">Copiar enlace</button>${navigator.share ? '<button data-act="sync-share">Compartir</button>' : ''}<button data-act="sync-now">Sincronizar ahora</button><button data-act="sync-off">Desactivar en este dispositivo</button></div>
+       <p class="muted small">${p.sync.lastPull ? `Última sincronización ${timeAgo(new Date(Math.max(p.sync.lastPull, p.sync.lastPush)).toISOString())}.` : ''} Cualquiera con el enlace puede ver y cambiar tus preferencias de lectura: no lo compartas.</p>`
+    : `<p>Usa la web en el móvil y en el PC con los mismos gustos: lo que aprendas en uno se aplica en el otro.</p>
+       <div class="actions"><button data-act="sync-on">Activar sincronización</button></div>`;
+
   return `<section class="settings">
-    <h2>Tus intereses</h2>${topicRows}
+    <h2>Secciones</h2><p class="muted small">Cuánto te interesa cada sección. Las subsecciones heredan el valor de su sección salvo que elijas otro. “Ocultar” la quita de la navegación.</p>
+    ${sectionRows}
+    <h2>Sin spoilers</h2>
+    <label class="row"><span>Tapar resultados de la NBA (marcadores, quién gana…)</span><input type="checkbox" data-spoilers${p.spoilers.nba ? ' checked' : ''}></label>
+    <label class="stack"><span>Otras palabras a tapar en la NBA (una por línea)</span><textarea data-spoiler-words rows="2" placeholder="playoffs">${esc(p.spoilers.extra.join('\n'))}</textarea></label>
+    <h2>Lo que he aprendido de ti</h2>
+    <p class="muted small">${counts}. Pulsa una etiqueta para que la olvide.</p>
+    <p class="small"><strong>Te interesa:</strong></p><div class="feats">${featChips(pos)}</div>
+    <p class="small"><strong>Te interesa poco:</strong></p><div class="feats">${featChips(neg)}</div>
+    <div class="actions"><button data-act="reset-learning">Borrar todo lo aprendido</button></div>
+    <h2>Sincronizar dispositivos</h2>${sync}
     <h2>Idiomas</h2>
     <label class="row"><span>Español</span><input type="checkbox" data-lang="es"${p.langs.includes('es') ? ' checked' : ''}></label>
     <label class="row"><span>Inglés</span><input type="checkbox" data-lang="en"${p.langs.includes('en') ? ' checked' : ''}></label>
     <h2>Palabras clave</h2>
-    <label class="stack"><span>Potenciar (una por línea)</span><textarea data-kw="boostKeywords" rows="3" placeholder="fusión nuclear&#10;James Webb">${esc(p.boostKeywords.join('\n'))}</textarea></label>
+    <label class="stack"><span>Potenciar (una por línea)</span><textarea data-kw="boostKeywords" rows="3" placeholder="fusión nuclear&#10;Wembanyama">${esc(p.boostKeywords.join('\n'))}</textarea></label>
     <label class="stack"><span>Silenciar (una por línea)</span><textarea data-kw="muteKeywords" rows="3" placeholder="horóscopo">${esc(p.muteKeywords.join('\n'))}</textarea></label>
     <h2>Medios</h2>${sourceRows}
-    <h2>Aprendizaje</h2>
-    <p class="muted small">${learnedTop ? `Lo que más te interesa según lo que lees: ${esc(learnedTop)}` : 'Aún no hay datos: abre, guarda o puntúa noticias y el orden se irá adaptando.'}</p>
+    <h2>Copia de seguridad</h2>
     <div class="actions">
       <button data-act="export">Exportar perfil</button>
       <label class="button">Importar perfil<input type="file" accept="application/json" data-act="import" hidden></label>
-      <button data-act="reset-learning">Borrar aprendizaje</button>
       <button data-act="onboarding">Repetir configuración inicial</button>
     </div>
-    <p class="muted small">Tu perfil se guarda solo en este navegador. Las noticias enlazan siempre al medio original.</p>
+    <p class="muted small">Las noticias enlazan siempre al medio original.</p>
   </section>`;
 }
 
 function render() {
   if (!state.data) return;
   $tabs.innerHTML = tabsHtml();
+  $subtabs.innerHTML = subtabsHtml();
+  $subtabs.hidden = state.route.view !== 'section';
   const p = state.profile;
-  const v = state.view;
+  const v = state.route.view;
   let html;
-  if (v === 'foryou') html = listHtml(rankStories(state.data.stories, p), 'No hay noticias que encajen con tus filtros.');
-  else if (v === 'briefing') html = briefingHtml();
-  else if (v === 'saved') html = listHtml(Object.values(p.saved).sort((a, b) => (b.publishedAt ?? '').localeCompare(a.publishedAt ?? '')), 'Aún no has guardado noticias.');
-  else if (v === 'settings') html = settingsHtml();
-  else {
-    const topic = v.slice('topic:'.length);
-    html = listHtml(rankStories(state.data.stories.filter((s) => s.topics.includes(topic)), p), 'No hay noticias de este tema ahora mismo.');
-  }
+  if (v === 'foryou') html = briefingHtml('portada', 'Lo importante ahora') + listHtml(rankStories(state.data.stories, p, Date.now(), { explore: true }), 'No hay noticias que encajen con tus filtros.');
+  else if (v === 'section') html = sectionView();
+  else if (v === 'megusta') html = listHtml(listOf(p.liked), 'Aún no has marcado ninguna noticia con ❤️. Cada me gusta enseña a la web lo que te interesa.');
+  else if (v === 'guardados') html = listHtml(listOf(p.saved), 'Aún no has guardado noticias.');
+  else html = settingsHtml();
   $main.innerHTML = html;
+  observeCards();
+  document.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 // ---------- interactions ----------
 
-$tabs.addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-view]');
-  if (!btn) return;
-  state.view = btn.dataset.view;
-  state.limit = PAGE;
-  render();
-  window.scrollTo({ top: 0 });
-});
+function learn(story, signal) {
+  train(state.profile.model, story, signal);
+}
+
+function rerenderCard(card, story) {
+  const entry = rankStories([story], state.profile)[0] ?? { story };
+  card.outerHTML = storyCard(entry);
+}
 
 $main.addEventListener('click', (e) => {
   const link = e.target.closest('[data-open]');
@@ -172,10 +302,17 @@ $main.addEventListener('click', (e) => {
     const story = findStory(link.dataset.open);
     if (story && !state.profile.read[story.id]) {
       state.profile.read[story.id] = Date.now();
-      learn(state.profile, story, 'open');
+      learn(story, 'open');
       persist();
       link.closest('.card')?.classList.add('read');
     }
+    return;
+  }
+  const forget = e.target.closest('[data-forget]');
+  if (forget) {
+    delete state.profile.model.w[forget.dataset.forget];
+    persist();
+    forget.remove();
     return;
   }
   const btn = e.target.closest('[data-act]');
@@ -187,50 +324,76 @@ $main.addEventListener('click', (e) => {
     return render();
   }
   if (act === 'export') return exportProfile();
+  if (act === 'onboarding') return openOnboarding();
   if (act === 'reset-learning') {
-    if (confirm('¿Borrar lo aprendido de tus lecturas? Tus temas y medios se mantienen.')) {
-      p.learned = defaultProfile().learned;
+    if (confirm('¿Borrar todo lo aprendido? Se mantienen tus secciones, medios y noticias guardadas.')) {
+      p.model = emptyModel();
+      p.model.t = Date.now();
       persist();
       render();
     }
     return;
   }
-  if (act === 'onboarding') return openOnboarding();
+  if (act.startsWith('sync-')) return syncAction(act);
 
   const card = btn.closest('.card');
   const story = card && findStory(card.dataset.id);
   if (!story) return;
-  if (act === 'save') {
-    if (p.saved[story.id]) delete p.saved[story.id];
-    else {
-      p.saved[story.id] = story;
-      learn(p, story, 'save');
-    }
+  if (act === 'reveal') {
+    state.revealed.add(story.id);
+    return rerenderCard(card, story);
+  }
+  if (act === 'like') {
+    const on = !isOn(p.liked, story.id);
+    setFlag(p.liked, story, on);
+    learn(story, on ? 'like' : 'unlike');
+    if (on) toast('❤️ Anotado: verás más noticias así');
+  } else if (act === 'save') {
+    const on = !isOn(p.saved, story.id);
+    setFlag(p.saved, story, on);
+    if (on) learn(story, 'save');
+  } else if (act === 'dislike') {
+    p.disliked[story.id] = Date.now();
+    learn(story, 'dislike');
+    toast('👎 Anotado: verás menos noticias así');
   } else if (act === 'hide') {
     p.hidden[story.id] = Date.now();
-    learn(p, story, 'hide');
-  } else {
-    learn(p, story, act);
-    btn.textContent = act === 'like' ? '👍 Anotado' : '👎 Anotado';
-    btn.disabled = true;
-    persist();
-    return;
+    learn(story, 'hide');
   }
   persist();
-  if (act === 'hide' || state.view === 'saved') card.remove();
-  else card.outerHTML = storyCard(story);
+  const leaves = act === 'hide' || act === 'dislike' || (state.route.view === 'megusta' && act === 'like') || (state.route.view === 'guardados' && act === 'save');
+  if (leaves) card.remove();
+  else rerenderCard(card, story);
 });
+
+$main.addEventListener(
+  'toggle',
+  (e) => {
+    const key = e.target.dataset?.briefing;
+    if (!key) return;
+    if (e.target.open) collapsed.delete(key);
+    else collapsed.add(key);
+    try {
+      localStorage.setItem('midiario.collapsed', JSON.stringify([...collapsed]));
+    } catch {}
+  },
+  true,
+);
 
 $main.addEventListener('change', (e) => {
   const el = e.target;
   const p = state.profile;
-  if (el.dataset.topic) p.topics[el.dataset.topic] = Number(el.value);
-  else if (el.dataset.source) for (const id of el.dataset.source.split(',')) p.sources[id] = Number(el.value);
+  if (el.dataset.section) {
+    if (el.value === '') delete p.sections[el.dataset.section];
+    else p.sections[el.dataset.section] = Number(el.value);
+  } else if (el.dataset.source) for (const id of el.dataset.source.split(',')) p.sources[id] = Number(el.value);
   else if (el.dataset.lang) p.langs = [...document.querySelectorAll('[data-lang]')].filter((c) => c.checked).map((c) => c.dataset.lang);
   else if (el.dataset.kw) p[el.dataset.kw] = el.value.split('\n').map((s) => s.trim()).filter(Boolean);
+  else if ('spoilers' in el.dataset) p.spoilers.nba = el.checked;
+  else if ('spoilerWords' in el.dataset) p.spoilers.extra = el.value.split('\n').map((s) => s.trim()).filter(Boolean);
   else if (el.dataset.act === 'import') return importProfile(el.files[0]);
   else return;
-  persist();
+  persist({ prefs: true });
   $tabs.innerHTML = tabsHtml();
 });
 
@@ -245,8 +408,8 @@ async function importProfile(file) {
   if (!file) return;
   try {
     const data = JSON.parse(await file.text());
-    if (typeof data !== 'object' || !data.topics) throw new Error();
-    state.profile = { ...defaultProfile(), ...data, onboarded: true };
+    if (typeof data !== 'object' || !(data.sections || data.topics)) throw new Error();
+    state.profile = { ...migrate(data), sync: state.profile.sync, onboarded: true, prefsAt: Date.now() };
     persist();
     render();
   } catch {
@@ -254,31 +417,183 @@ async function importProfile(file) {
   }
 }
 
+// ---------- impressions: stories you keep scrolling past ----------
+
+let observer;
+const timers = new Map();
+
+function observeCards() {
+  observer?.disconnect();
+  timers.forEach(clearTimeout);
+  timers.clear();
+  if (!['foryou', 'section'].includes(state.route.view) || !('IntersectionObserver' in window)) return;
+  observer = new IntersectionObserver(
+    (entries) => {
+      for (const en of entries) {
+        const id = en.target.dataset.id;
+        if (en.isIntersecting) timers.set(id, setTimeout(() => markSeen(id), 1500));
+        else clearTimeout(timers.get(id));
+      }
+    },
+    { threshold: 0.6 },
+  );
+  document.querySelectorAll('.card[data-id]').forEach((c, i) => i < 20 && observer.observe(c));
+}
+
+// Seen near the top in 3 different visits and never opened → mild "not for me" for its section/outlet.
+function markSeen(id) {
+  const p = state.profile;
+  const e = (p.seen[id] ??= { n: 0 });
+  e.t = Date.now();
+  if (e.s !== SESSION) {
+    e.n++;
+    e.s = SESSION;
+  }
+  const story = findStory(id);
+  if (e.n >= 3 && !e.k && story && !p.read[id] && !isOn(p.liked, id) && !isOn(p.saved, id)) {
+    e.k = 1;
+    learn(story, 'skip');
+    persist();
+  } else persist({ sync: false });
+}
+
+// ---------- sync between devices ----------
+
+const API = (code) => `api/profile/${code}`;
+const syncLink = () => `${location.origin}${location.pathname}#sync=${state.profile.sync.code}`;
+let pushTimer;
+let pushPending = false;
+
+function newCode() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function scheduleSync() {
+  if (!state.profile.sync.code) return;
+  pushPending = true;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(push, 15000);
+}
+
+async function push({ keepalive = false } = {}) {
+  const p = state.profile;
+  if (!p.sync.code) return;
+  clearTimeout(pushTimer);
+  pushPending = false;
+  try {
+    const res = await fetch(API(p.sync.code), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(toRemote(p)), keepalive });
+    if (!res.ok) throw new Error(res.status);
+    p.sync.lastPush = Date.now();
+    saveProfile(p);
+  } catch {
+    pushPending = true;
+  }
+}
+
+async function pull() {
+  const p = state.profile;
+  if (!p.sync.code) return false;
+  try {
+    const res = await fetch(API(p.sync.code), { cache: 'no-store' });
+    if (res.status === 404) {
+      await push();
+      return false;
+    }
+    if (!res.ok) throw new Error(res.status);
+    const remote = await res.json();
+    const merged = mergeProfiles(p, remote);
+    merged.sync = { ...p.sync, lastPull: Date.now() };
+    merged.seen = p.seen;
+    state.profile = merged;
+    saveProfile(merged);
+    await push();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function syncAction(act) {
+  const p = state.profile;
+  if (act === 'sync-on') {
+    p.sync.code = newCode();
+    persist();
+    await push();
+    toast('Sincronización activada');
+  } else if (act === 'sync-off') {
+    if (!confirm('¿Desactivar la sincronización en este dispositivo? Tus datos se quedan aquí.')) return;
+    p.sync = { code: null, lastPull: 0, lastPush: 0 };
+    saveProfile(p);
+  } else if (act === 'sync-copy') {
+    try {
+      await navigator.clipboard.writeText(syncLink());
+      toast('Enlace copiado');
+    } catch {
+      document.querySelector('input.code')?.select();
+    }
+    return;
+  } else if (act === 'sync-share') {
+    navigator.share({ title: 'Mi Diario: sincronizar', url: syncLink() }).catch(() => {});
+    return;
+  } else if (act === 'sync-now') {
+    toast((await pull()) ? 'Sincronizado' : 'No se ha podido sincronizar');
+  }
+  render();
+}
+
+// Opening #sync=CODE on a new device joins it to that profile.
+async function linkSync(code) {
+  history.replaceState(null, '', location.pathname + '#/');
+  state.route = { view: 'foryou' };
+  if (!/^[a-f0-9]{32}$/.test(code)) return toast('Enlace de sincronización no válido');
+  state.profile.sync = { code, lastPull: 0, lastPush: 0 };
+  saveProfile(state.profile);
+  const ok = await pull();
+  if (ok) state.profile.onboarded = true;
+  persist({ sync: false });
+  document.getElementById('onboarding').close?.();
+  toast(ok ? 'Dispositivo unido: tus gustos ya están aquí' : 'No se ha podido sincronizar');
+  render();
+}
+
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'hidden' && pushPending) push({ keepalive: true });
+  if (document.visibilityState === 'visible' && state.profile.sync.code && Date.now() - state.profile.sync.lastPull > 120000) {
+    if (await pull()) render();
+  }
+});
+
 // ---------- onboarding ----------
 
 function openOnboarding() {
   const dlg = document.getElementById('onboarding');
   const p = state.profile;
+  const pick = (key, label) => `<label class="pick"><input type="checkbox" name="s" value="${key}"${sectionPref(p, key) >= 3 ? ' checked' : ''}><span>${esc(label)}</span></label>`;
   dlg.innerHTML = `<form method="dialog" class="onboarding">
     <h2>Bienvenido a Mi Diario</h2>
-    <p>Elige qué te interesa. Después, la web aprenderá de lo que abres, guardas y puntúas.</p>
-    <fieldset><legend>Temas</legend><div class="chips">${Object.entries(TOPICS)
-      .map(([t, l]) => `<label class="pick"><input type="checkbox" name="topic" value="${t}"${(p.topics[t] ?? 1) >= 3 ? ' checked' : ''}><span>${l}</span></label>`)
-      .join('')}</div><p class="muted small">Los marcados tendrán prioridad; el resto seguirá apareciendo con menos peso.</p></fieldset>
+    <p>Marca lo que más te interesa. Después, cada ❤️ que des enseñará a la web tus gustos.</p>
+    ${SECTIONS.map((s) => `<fieldset><legend>${s.label}</legend><div class="chips">${pick(s.id, `Todo ${s.label}`)}${s.subs.map((sub) => pick(sub.key, sub.label)).join('')}</div></fieldset>`).join('')}
     <fieldset><legend>Idiomas</legend><div class="chips">
       <label class="pick"><input type="checkbox" name="lang" value="es"${p.langs.includes('es') ? ' checked' : ''}><span>Español</span></label>
       <label class="pick"><input type="checkbox" name="lang" value="en"${p.langs.includes('en') ? ' checked' : ''}><span>Inglés</span></label>
     </div></fieldset>
+    <p class="muted small">¿Ya la usas en otro dispositivo? Activa “Sincronizar” en sus Ajustes y abre aquí el enlace.</p>
     <button class="primary" value="ok">Empezar</button>
   </form>`;
   dlg.querySelector('form').addEventListener('submit', () => {
     const f = new FormData(dlg.querySelector('form'));
-    const picked = new Set(f.getAll('topic'));
-    for (const t of Object.keys(TOPICS)) p.topics[t] = picked.has(t) ? 3 : 1;
+    const picked = new Set(f.getAll('s'));
+    for (const s of SECTIONS) {
+      for (const key of [s.id, ...s.subs.map((x) => x.key)]) {
+        if (picked.has(key)) p.sections[key] = 3;
+        else if (p.sections[key] === 3) delete p.sections[key];
+      }
+    }
     const langs = f.getAll('lang');
     p.langs = langs.length ? langs : ['es', 'en'];
     p.onboarded = true;
-    persist();
+    persist({ prefs: true });
     render();
   });
   dlg.showModal();
@@ -287,4 +602,10 @@ function openOnboarding() {
 // ---------- boot ----------
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-loadData();
+state.route = parseRoute();
+if (location.hash.startsWith('#sync=')) {
+  loadData().then(() => linkSync(location.hash.slice(6)));
+} else {
+  loadData();
+  pull().then((changed) => changed && render());
+}

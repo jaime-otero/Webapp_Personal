@@ -19,3 +19,13 @@ test('summarize parses the Gemini JSON response', async (t) => {
   assert.equal(res.briefing, 'Hoy…');
   assert.deepEqual(res.summaries, { abc: 'El CERN…' });
 });
+
+test('NBA section: sentences that still reveal results are dropped', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => {
+    const text = JSON.stringify({ briefing: 'Curry renueva con los Warriors. Los Lakers ganan 120-110 a los Suns.', stories: [{ i: 0, id: 'x', resumen: 'Los Celtics vencen a los Knicks.' }] });
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }));
+  });
+  const res = await summarize(stories, { apiKey: 'k', label: 'NBA', nba: true });
+  assert.equal(res.briefing, 'Curry renueva con los Warriors.');
+  assert.deepEqual(res.summaries, {});
+});

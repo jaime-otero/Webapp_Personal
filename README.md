@@ -10,22 +10,26 @@ Agregador de noticias personal y gratuito: recoge noticias de ~40 medios fiables
 GitHub Actions (cada 2 h)
   └─ npm run ingest
        1. descarga los RSS de sources.json
-       2. limpia, deduplica y clasifica por temas
-       3. agrupa la misma noticia entre medios
-       4. Gemini (gratis): resumen de las ~25 más relevantes + briefing
+       2. limpia, deduplica y clasifica en secciones/subsecciones
+       3. agrupa la misma noticia entre medios y marca spoilers de la NBA
+       4. Gemini (gratis): un briefing por sección + resúmenes de sus noticias top
        5. escribe web/data/news.json
-  └─ despliega web/ en Cloudflare Workers (assets estáticos, wrangler.jsonc)
+  └─ despliega en Cloudflare Workers: web/ (assets) + src/worker.js (API de sincronización, KV)
 
 Navegador (web/)
-  carga news.json → ordena con tu perfil (localStorage) → feed "Para ti"
+  carga news.json → ordena con tu perfil (algoritmo que aprende de tus ❤️) → feeds
 ```
 
 | Ruta | Qué es |
 |---|---|
-| `sources.json` | Lista de medios y feeds (añadir/quitar fuentes aquí) |
+| `sources.json` | Medios y feeds, cada uno con su sección por defecto (añadir/quitar fuentes aquí) |
+| `web/lib/taxonomy.js` | Secciones, subsecciones y palabras clave para clasificar |
+| `web/lib/spoilers.js` | Detector de resultados de la NBA |
+| `src/worker.js` | Worker: sirve la web y guarda el perfil sincronizado (KV) |
 | `scripts/ingest/` | Descarga, parseo, clasificación, agrupación y resúmenes IA |
 | `web/` | La web/PWA estática (sin build) |
-| `web/lib/rank.js` | Algoritmo de personalización y aprendizaje |
+| `web/lib/rank.js` | Algoritmo de personalización (regresión logística online) |
+| `web/lib/profile.js` | Perfil del usuario, migración y fusión al sincronizar |
 | `test/` | Tests (`npm test`) |
 
 ## Probar en local
@@ -50,9 +54,23 @@ npm test
 4. El workflow *Actualizar noticias* se ejecuta en la rama por defecto del repo cada 2 horas, en cada push y a mano desde la pestaña *Actions → Actualizar noticias → Run workflow*.
 5. Abre la web en el móvil → menú del navegador → **"Añadir a pantalla de inicio" / "Instalar app"**.
 
-## Personalización
+## Secciones
 
-- **Configuración inicial:** eliges temas e idiomas.
-- **Ajustes:** peso de cada tema (de *Ocultar* a *Me encanta*), medios favoritos o silenciados, palabras clave a potenciar o silenciar.
-- **Aprendizaje:** lo que abres, guardas, marcas con 👍/👎 u ocultas ajusta el orden. Se puede ver lo aprendido y borrarlo en Ajustes.
-- El perfil se guarda solo en tu navegador; se puede exportar e importar para llevarlo a otro dispositivo.
+Para ti · España (Política, Economía, Sociedad, Deportes, Cultura) · EE. UU. (Política, Economía, Sociedad, NBA) · Internacional (Europa, Latinoamérica, Oriente Medio, Asia y otros) · Ciencia (Física, Espacio, Vida y salud, Clima) · Tecnología (IA, Empresas y gadgets, Innovación) · Economía (Mercados, Empresas, Energía).
+
+Cada sección tiene su resumen IA arriba (y la NBA uno propio, sin resultados). Las rutas se pueden enlazar: `#/s/eeuu/nba`.
+
+## Cómo aprende
+
+- **❤️ Me gusta**, **Guardar** y **abrir** una noticia son señales positivas; **👎** y **Ocultar**, negativas. Si una noticia te aparece arriba en 3 visitas distintas y nunca la abres, cuenta como un "no" suave (solo para su sección y medio).
+- Cada noticia se describe con rasgos: sección y subsección, medio, palabras y pares de palabras del titular y nombres propios ("Golden State", "CERN"). Un modelo de **regresión logística online** ajusta el peso de cada rasgo con cada señal; lo aprendido se va olvidando un 3 % al día.
+- Orden final = tu preferencia por la sección (Ajustes) + lo aprendido + nº de medios que la cubren + frescura, con diversidad de temas y, en Para ti, 1 de cada 10 noticias "para descubrir" fuera de lo habitual.
+- Cada tarjeta dice por qué te la enseña (♥ NBA · Física) y en Ajustes puedes ver y olvidar lo aprendido.
+
+## Sin spoilers de la NBA
+
+Las noticias de la NBA con marcadores, "X gana a Y", estadísticas de partido o eliminatorias aparecen tapadas ("Posible spoiler · Mostrar") en todos los feeds. Nunca se envían a la IA, y el resumen de la NBA tiene prohibido dar resultados (con un filtro posterior). Se puede desactivar o añadir palabras en Ajustes.
+
+## Sincronizar móvil y PC
+
+Ajustes → *Sincronizar dispositivos* → *Activar* y abre el enlace en el otro dispositivo. El perfil se guarda en Cloudflare KV (gratis) bajo un código aleatorio de 128 bits; se sube como mucho cada 15 s y se descarga al abrir la web. El perfil también se puede exportar/importar como archivo.

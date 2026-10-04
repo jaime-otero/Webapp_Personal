@@ -56,7 +56,7 @@ export function parseFeed(xml, source) {
     const title = cleanText(item.title);
     const url = pickLink(item);
     if (!title || !url) continue;
-    const summary = truncate(cleanText(item.description ?? item.summary ?? item['content:encoded'] ?? item.content), 300);
+    const summary = truncate(cleanText(item.description ?? item.summary ?? item['content:encoded'] ?? item.content), 240);
     const categories = asArray(item.category).map((c) => cleanText(typeof c === 'object' ? c['#text'] ?? c['@term'] : c)).filter(Boolean);
     out.push({
       id: hash(url),
@@ -70,7 +70,7 @@ export function parseFeed(xml, source) {
       publishedAt: pickDate(item),
       image: pickImage(item),
       categories,
-      feedTopics: source.topics,
+      feedSections: source.sections ?? [],
     });
   }
   return out;

@@ -1,6 +1,6 @@
 // App shell: stale-while-revalidate (instant load, updates picked up on the next visit). News data: network-first with the cached copy as offline fallback.
-const VERSION = 'v1';
-const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'lib/profile.js', 'lib/rank.js', 'lib/tokens.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png'];
+const VERSION = 'v2';
+const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'lib/profile.js', 'lib/rank.js', 'lib/tokens.js', 'lib/taxonomy.js', 'lib/spoilers.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(`shell-${VERSION}`).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -16,7 +16,7 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (e.request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.includes('/api/')) return;
   if (url.pathname.endsWith('/data/news.json')) {
     e.respondWith(
       fetch(e.request)

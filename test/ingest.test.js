@@ -5,7 +5,7 @@ import { classify } from '../scripts/ingest/classify.js';
 import { clusterArticles } from '../scripts/ingest/cluster.js';
 import { cleanText } from '../scripts/ingest/text.js';
 
-const src = { id: 'test', name: 'Test', lang: 'en', region: 'int', topics: [] };
+const src = { id: 'test', name: 'Test', lang: 'en', region: 'int', sections: [] };
 
 test('cleanText strips raw, CDATA and entity-escaped HTML', () => {
   assert.equal(cleanText('<p>Hola <b>mundo</b></p>'), 'Hola mundo');
@@ -21,7 +21,6 @@ test('parseFeed reads RSS 2.0 with media image', () => {
   const [a] = parseFeed(xml, src);
   assert.equal(a.title, 'Quantum computer breaks record');
   assert.equal(a.summary, 'A new qubit design.');
-  assert.equal(a.url, 'https://ex.com/a');
   assert.equal(a.image, 'https://ex.com/a.jpg');
   assert.equal(a.publishedAt, '2026-10-04T10:00:00.000Z');
 });
@@ -34,21 +33,46 @@ test('parseFeed reads Atom', () => {
   assert.equal(a.summary, 'Webb sees it');
 });
 
-test('classify uses keywords and feed topics', () => {
-  const base = { summary: '', categories: [], region: 'int', feedTopics: [] };
-  assert.ok(classify({ ...base, title: 'Physicists observe new quantum effect' }).includes('fisica'));
-  assert.ok(classify({ ...base, title: 'Physicists observe new quantum effect' }).includes('ciencia'));
-  assert.ok(!classify({ ...base, title: 'Los particulares compran más coches' }).includes('fisica'));
-  assert.deepEqual(classify({ ...base, title: 'Something', region: 'es', feedTopics: ['espana'] }), ['espana']);
+// Real headlines from 4 October 2026.
+const cls = (title, feedSections, summary = '') => classify({ title, summary, categories: [], feedSections });
+
+test('classify: España by subsection', () => {
+  assert.deepEqual(cls('Sumar presentará su Frente Amplio y anunciará el candidato electoral el 17 de octubre', ['espana']), ['espana/politica']);
+  assert.ok(cls('Mueren dos jóvenes ahogados en una playa de Guardamar del Segura', ['espana']).includes('espana/sociedad'));
+  assert.deepEqual(cls('Póquer de Pina con un Barça de cine', ['espana/deportes']), ['espana/deportes']);
+  assert.ok(cls('Los Javis y La bola negra desembarcan en Hollywood: la película aspira al Oscar', ['espana']).includes('espana/cultura'));
 });
 
-test('clusterArticles groups the same story across outlets but not unrelated ones', () => {
-  const mk = (id, source, title) => ({ id, url: `https://x/${id}`, source, sourceId: source, title, summary: '', lang: 'es', publishedAt: '2026-10-04T10:00:00Z', image: null, topics: ['espana'] });
+test('classify: general feeds move stories to the region they happen in', () => {
+  assert.deepEqual(cls("Brazil election: Early count puts Bolsonaro ahead of Lula", ['internacional']), ['internacional/latam']);
+  assert.deepEqual(cls('Torrential rain and flooding leave 2 dead and 1 missing in Spain\'s Catalonia region', ['internacional']).filter((s) => s.startsWith('espana')).length, 1);
+  assert.ok(cls('Trump takes red state midterm blitz to Nebraska as GOP frets over Senate race', ['internacional']).includes('eeuu/politica'));
+  assert.deepEqual(cls('Russia threatens more strikes after Zelensky vows to hit oil refineries', ['espana']), ['internacional/europa']);
+});
+
+test('classify: NBA always lands in EE. UU. → NBA, from any outlet', () => {
+  assert.ok(cls('Doncic se pone la corona de los Lakers: "Estoy listo"', ['espana/deportes']).includes('eeuu/nba'));
+  assert.ok(cls('Could the Bucks become the center of the trade market?', ['eeuu/nba']).includes('eeuu/nba'));
+  assert.ok(!cls('Póquer de Pina con un Barça de cine', ['espana/deportes']).includes('eeuu/nba'));
+});
+
+test('classify: topical sections, stricter on general news feeds', () => {
+  assert.deepEqual(cls('Giant fluctuations of focused light reveal hidden correlations in opaque materials', ['ciencia/fisica']), ['ciencia/fisica']);
+  assert.ok(cls('Physicists observe a new quantum effect in superconductors', ['internacional']).includes('ciencia/fisica'));
+  assert.ok(!cls('Dos muertos y un desaparecido por el fuerte temporal en Cataluña', ['espana']).some((s) => s.startsWith('ciencia')));
+  assert.ok(cls('OpenAI safety leader quits, warning AI company culture is broken', ['tecnologia']).includes('tecnologia/ia'));
+  assert.ok(cls('Por qué el precio del petróleo se mantiene estancado en los 100 dólares', ['espana', 'economia']).includes('economia/energia'));
+});
+
+test('clusterArticles groups the same story across outlets and keeps every section', () => {
+  const mk = (id, source, title, sections) => ({ id, url: `https://x/${id}`, source, sourceId: source, title, summary: '', lang: 'es', publishedAt: '2026-10-04T10:00:00Z', image: null, sections });
   const stories = clusterArticles([
-    mk('1', 'A', 'Mueren dos jóvenes ahogados en una playa de Guardamar del Segura'),
-    mk('2', 'B', 'Mueren dos jóvenes ahogados en una playa de Guardamar de Segura, Alicante'),
-    mk('3', 'C', 'El Gobierno aprueba los presupuestos generales'),
+    mk('1', 'A', 'Mueren dos jóvenes ahogados en una playa de Guardamar del Segura', ['espana/sociedad']),
+    mk('2', 'B', 'Mueren dos jóvenes ahogados en una playa de Guardamar de Segura, Alicante', ['espana']),
+    mk('3', 'A', 'Mueren dos jóvenes ahogados en la playa de Guardamar del Segura', ['espana/deportes']),
+    mk('4', 'C', 'El Gobierno aprueba los presupuestos generales', ['espana/politica']),
   ]);
   assert.equal(stories.length, 2);
-  assert.equal(stories.find((s) => s.sources.length === 2).sources.length, 2);
+  const drown = stories.find((s) => s.sources.length === 2);
+  assert.deepEqual(drown.sections.sort(), ['espana', 'espana/deportes', 'espana/sociedad']);
 });

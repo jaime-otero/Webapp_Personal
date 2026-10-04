@@ -31,26 +31,27 @@ export function clusterArticles(articles) {
         bestScore = s;
       }
     }
-    if (best && !best.articles.some((a) => a.sourceId === art.sourceId || a.source === art.source)) {
+    const sameOutlet = best?.articles.find((a) => a.source === art.source);
+    if (sameOutlet) {
+      // Same outlet in another section feed: a duplicate, but keep the section it was filed under.
+      sameOutlet.sections = [...new Set([...sameOutlet.sections, ...art.sections])];
+    } else if (best) {
       best.articles.push(art);
       best.articleTokens.push(tk);
-    } else if (best) {
-      // Same outlet republishing in another section: keep it out as a duplicate.
-      continue;
     } else {
       clusters.push({ lang: art.lang, articleTokens: [tk], articles: [art] });
     }
   }
   return clusters.map((c) => {
     const lead = c.articles.find((a) => a.image) ?? c.articles[0];
-    const topics = [...new Set(c.articles.flatMap((a) => a.topics))];
+    const sections = [...new Set(c.articles.flatMap((a) => a.sections))];
     return {
       id: c.articles[c.articles.length - 1].id,
       title: lead.title,
       summary: lead.summary,
       image: lead.image,
       lang: c.lang,
-      topics,
+      sections,
       publishedAt: c.articles.map((a) => a.publishedAt).filter(Boolean).sort().at(-1) ?? null,
       sources: c.articles.map(({ title, url, source, sourceId, publishedAt }) => ({ title, url, source, sourceId, publishedAt })),
     };
