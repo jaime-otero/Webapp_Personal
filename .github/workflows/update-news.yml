@@ -1,0 +1,43 @@
+name: Actualizar noticias
+
+on:
+  schedule:
+    # Cada 2 h (≈370 despliegues/mes, dentro de los 500 gratuitos de Cloudflare Pages).
+    # Minuto 17 para evitar la congestión de las :00.
+    - cron: '17 */2 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: update-news
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Descargar feeds y generar resúmenes
+        run: npm run ingest
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          PREVIOUS_DATA_URL: ${{ vars.SITE_URL && format('{0}/data/news.json', vars.SITE_URL) || '' }}
+      - name: Publicar en Cloudflare Pages
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy web --project-name=${{ vars.CF_PAGES_PROJECT || 'mi-diario' }} --branch=main --commit-dirty=true

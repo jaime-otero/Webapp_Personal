@@ -1,0 +1,16 @@
+{
+  "name": "mi-diario",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agregador de noticias personal: RSS de medios fiables + personalización en el navegador + resúmenes IA",
+  "type": "module",
+  "scripts": {
+    "ingest": "node scripts/ingest/index.js",
+    "dev": "npx --yes serve web -l 5173",
+    "test": "node --test 'test/**/*.test.js'"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "fast-xml-parser": "^5.11.2"
+  }
+}

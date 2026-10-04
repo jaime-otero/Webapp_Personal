@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mi Diario</title>
+  <meta name="description" content="Noticias de medios fiables, ordenadas según tus intereses.">
+  <meta name="theme-color" content="#fbfaf7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16171a" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>Mi Diario</h1>
+      <p id="updated" class="muted"></p>
+    </div>
+    <nav id="tabs" class="tabs" aria-label="Secciones"></nav>
+  </header>
+  <main id="main" tabindex="-1">
+    <p class="muted center">Cargando noticias…</p>
+  </main>
+  <dialog id="onboarding"></dialog>
+</body>
+</html>
