@@ -1,0 +1,9 @@
+{
+  // Cloudflare Worker that only serves the static PWA in web/ (no server code).
+  "name": "mi-diario",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./web",
+    "not_found_handling": "single-page-application"
+  }
+}

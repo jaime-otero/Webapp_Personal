@@ -49,17 +49,17 @@ Todo el perfil vive en el navegador (`localStorage`): no hace falta servidor, ba
 | Pieza | Servicio | Límite gratuito | Uso previsto |
 |---|---|---|---|
 | Actualización periódica | GitHub Actions (cron) | Repo privado: 2.000 min/mes; público: ilimitado | ~1 min cada 2 h ≈ 360 min/mes |
-| Hosting web | Cloudflare Pages | Ancho de banda ilimitado, 500 despliegues/mes | ≈370 despliegues/mes |
+| Hosting web | Cloudflare Workers (assets estáticos) | Servir archivos estáticos es gratis e ilimitado | ≈370 despliegues/mes |
 | IA | Gemini free tier | Varias peticiones/min y cientos/día | 12/día |
 | App móvil | PWA | — | Instalable en Android, iOS y PC |
 
-**Frecuencia:** Cloudflare Pages Free permite 500 despliegues al mes, así que el workflow actualiza **cada 2 horas** (≈370/mes). Para actualizar cada hora habría que guardar los datos en Cloudflare R2/KV y desplegar solo cuando cambia el código, o usar GitHub Pages.
+**Frecuencia:** el workflow actualiza **cada 2 horas** (≈370 despliegues/mes): suficiente para un diario y dentro de los minutos gratuitos de GitHub Actions incluso con el repo privado. Se puede subir a cada hora cambiando el `cron`. Inicialmente se planteó Cloudflare Pages, pero Cloudflare recomienda ya Workers con assets estáticos para proyectos nuevos (y Pages limita a 500 despliegues/mes).
 
 Alternativa sin Cloudflare: hacer el repositorio público y usar **GitHub Pages** (gratis, sin límite de despliegues relevante). En repos privados GitHub Pages requiere plan de pago.
 
 Por qué no un servidor “de verdad”: leer los RSS directamente desde el navegador no funciona (bloqueo CORS), y los *workers* gratuitos tienen límites de CPU muy bajos (10 ms en Cloudflare Workers) para parsear 40 feeds. GitHub Actions no tiene ese problema.
 
-**Único coste opcional:** un dominio propio (~10 €/año). Sin él, la web vive en `mi-diario.pages.dev`.
+**Único coste opcional:** un dominio propio (~10 €/año). Sin él, la web vive en `mi-diario.<tu-subdominio>.workers.dev`.
 
 **App nativa:** descartada para empezar (Google Play 25 $ una vez, App Store 99 $/año). La PWA se instala desde el navegador, funciona sin conexión con la última edición descargada y no requiere tiendas.
 
@@ -77,7 +77,7 @@ Por qué no un servidor “de verdad”: leer los RSS directamente desde el nave
 |---|---|
 | Un feed cambia o se cae | El script continúa con los demás y lista los que fallan. |
 | Clasificación por palabras clave imperfecta | Reglas afinables en `scripts/ingest/classify.js`; fase futura con embeddings o con la propia IA. |
-| Cuotas de IA cambian | La web funciona sin IA; se reaprovechan los últimos resúmenes. Modelo configurable (`GEMINI_MODEL`). |
+| Cuotas o modelos de IA cambian (Google retira versiones a menudo) | Se usan los alias `gemini-flash-latest` y, si falla, `gemini-flash-lite-latest`; la web funciona sin IA y reaprovecha los últimos resúmenes. Modelo configurable (`GEMINI_MODEL`). |
 | El cron de GitHub se retrasa o se desactiva tras 60 días sin actividad en el repo | Ejecutable a mano (`workflow_dispatch`); un commit reactiva el cron. |
 | Perfil solo en un dispositivo | Exportar/importar; en el futuro, login con Supabase o Cloudflare D1 (ambos con plan gratuito). |
 

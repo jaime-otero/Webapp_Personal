@@ -2,12 +2,11 @@ name: Actualizar noticias
 
 on:
   schedule:
-    # Cada 2 h (≈370 despliegues/mes, dentro de los 500 gratuitos de Cloudflare Pages).
+    # Cada 2 h: suficiente para un diario y muy por debajo de las cuotas gratuitas.
     # Minuto 17 para evitar la congestión de las :00.
     - cron: '17 */2 * * *'
   workflow_dispatch:
   push:
-    branches: [main]
 
 concurrency:
   group: update-news
@@ -15,6 +14,8 @@ concurrency:
 
 jobs:
   update:
+    # En push, solo la rama por defecto publica (cron y ejecución manual ya van sobre ella).
+    if: github.event_name != 'push' || github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -34,10 +35,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           PREVIOUS_DATA_URL: ${{ vars.SITE_URL && format('{0}/data/news.json', vars.SITE_URL) || '' }}
-      - name: Publicar en Cloudflare Pages
+      - name: Publicar en Cloudflare Workers
         if: env.CLOUDFLARE_API_TOKEN != ''
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy web --project-name=${{ vars.CF_PAGES_PROJECT || 'mi-diario' }} --branch=main --commit-dirty=true
+          command: deploy

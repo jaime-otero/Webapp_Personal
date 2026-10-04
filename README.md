@@ -14,7 +14,7 @@ GitHub Actions (cada 2 h)
        3. agrupa la misma noticia entre medios
        4. Gemini (gratis): resumen de las ~25 más relevantes + briefing
        5. escribe web/data/news.json
-  └─ despliega web/ en Cloudflare Pages
+  └─ despliega web/ en Cloudflare Workers (assets estáticos, wrangler.jsonc)
 
 Navegador (web/)
   carga news.json → ordena con tu perfil (localStorage) → feed "Para ti"
@@ -43,13 +43,11 @@ npm test
 ## Ponerla en internet (gratis)
 
 1. **Clave de IA (opcional):** crea una API key en [Google AI Studio](https://aistudio.google.com/apikey).
-2. **Cloudflare:** crea una cuenta gratuita y, una sola vez, el proyecto de Pages:
-   `npx wrangler login && npx wrangler pages project create mi-diario --production-branch=main`
-   Luego crea un API token con permiso *Cloudflare Pages: Edit*.
+2. **Cloudflare:** en *My Profile → API Tokens → Create Token*, usa la plantilla **"Edit Cloudflare Workers"** y copia el token. Copia también tu **Account ID** (aparece en la página de *Workers & Pages*). El worker `mi-diario` se crea solo en el primer despliegue.
 3. **En GitHub → Settings → Secrets and variables → Actions:**
    - Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `GEMINI_API_KEY`
-   - Variables (opcionales): `SITE_URL` (p. ej. `https://mi-diario.pages.dev`, para reaprovechar resúmenes si falla la IA), `GEMINI_MODEL`, `CF_PAGES_PROJECT`
-4. Fusiona en `main`. El workflow *Actualizar noticias* se ejecuta cada 2 horas (y a mano desde la pestaña Actions).
+   - Variables (opcionales): `SITE_URL` (la URL final, p. ej. `https://mi-diario.<tu-subdominio>.workers.dev`, para reaprovechar resúmenes si falla la IA) y `GEMINI_MODEL` (por defecto se usan los alias `gemini-flash-latest` → `gemini-flash-lite-latest`).
+4. El workflow *Actualizar noticias* se ejecuta en la rama por defecto del repo cada 2 horas, en cada push y a mano desde la pestaña *Actions → Actualizar noticias → Run workflow*.
 5. Abre la web en el móvil → menú del navegador → **"Añadir a pantalla de inicio" / "Instalar app"**.
 
 ## Personalización
