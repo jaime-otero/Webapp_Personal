@@ -183,7 +183,7 @@ function storyCard(entry) {
   const text = story.aiSummary
     ? `<p class="summary"><span class="badge" title="Resumen generado con IA a partir de los titulares y extractos de los medios">IA</span> ${esc(story.aiSummary)}</p>`
     : story.summary
-      ? `<p class="summary">${esc(story.summary)}</p>`
+      ? `<p class="summary clamp" title="Toca para ver entero">${esc(story.summary)}</p>`
       : '';
   const why = entry.explore
     ? `<span class="why explore" title="Algo distinto a lo habitual, para que no te pierdas nada importante">✨ Para descubrir</span>`
@@ -345,6 +345,11 @@ function rerenderCard(card, story) {
 }
 
 $main.addEventListener('click', (e) => {
+  const extract = e.target.closest('.summary.clamp');
+  if (extract) {
+    extract.classList.toggle('open');
+    return;
+  }
   const link = e.target.closest('[data-open]');
   if (link) {
     const story = findStory(link.dataset.open);

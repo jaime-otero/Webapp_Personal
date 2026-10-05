@@ -115,7 +115,8 @@ dialog::backdrop { background: rgb(0 0 0 / 0.45); }
 @media (max-width: 380px) {
   .thumb { display: none; }
 }
-.summary { display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+/* AI summaries are short and always shown in full; feed extracts are clamped until tapped. */
+.summary.clamp:not(.open) { display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
 
 /* v2: subsections, likes, spoilers, per-section briefings, sync */
 a.tab { text-decoration: none; display: inline-block; }
