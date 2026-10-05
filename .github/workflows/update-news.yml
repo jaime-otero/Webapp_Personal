@@ -9,11 +9,15 @@ on:
   workflow_dispatch:
     inputs:
       ai_provider:
-        description: 'IA para los resúmenes (groq = probar la reserva como si Gemini fallara)'
+        description: 'IA para los resúmenes (groq / github = probar esa reserva como si las anteriores fallaran)'
         type: choice
-        options: [auto, groq]
+        options: [auto, groq, github]
         default: auto
   push:
+
+permissions:
+  contents: read
+  models: read # GitHub Models, la última IA de reserva (usa el GITHUB_TOKEN, sin clave aparte)
 
 concurrency:
   group: update-news
@@ -54,10 +58,12 @@ jobs:
       - name: Descargar feeds y generar resúmenes
         run: npm run ingest
         env:
-          GEMINI_API_KEY: ${{ inputs.ai_provider != 'groq' && secrets.GEMINI_API_KEY || '' }}
+          GEMINI_API_KEY: ${{ inputs.ai_provider != 'groq' && inputs.ai_provider != 'github' && secrets.GEMINI_API_KEY || '' }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_API_KEY: ${{ inputs.ai_provider != 'github' && secrets.GROQ_API_KEY || '' }}
           GROQ_MODEL: ${{ vars.GROQ_MODEL }}
+          GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_MODELS_MODEL: ${{ vars.GITHUB_MODELS_MODEL }}
           PREVIOUS_DATA_URL: ${{ format('{0}/data/news.json', vars.SITE_URL || 'https://mi-diario.mizepp.workers.dev') }}
       - name: Publicar en Cloudflare Workers
         if: env.CLOUDFLARE_API_TOKEN != ''
