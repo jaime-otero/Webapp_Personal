@@ -227,3 +227,19 @@ export function topFeatures(model, n = 12) {
   const neg = entries.filter(([, w]) => w < -0.3).sort((a, b) => a[1] - b[1]).slice(0, n);
   return { pos, neg };
 }
+
+// Alternative orders for a ranked list (filters already applied): newest first, or the
+// stories covered by the most outlets first. 'foryou' keeps the personalised order.
+export const SORTS = [
+  ['foryou', 'Para ti'],
+  ['recent', 'Más recientes'],
+  ['coverage', 'Más medios'],
+];
+
+export function sortEntries(entries, mode) {
+  if (mode !== 'recent' && mode !== 'coverage') return entries;
+  const time = (e) => Date.parse(e.story.publishedAt) || 0;
+  const byTime = (a, b) => time(b) - time(a);
+  const cmp = mode === 'recent' ? byTime : (a, b) => b.story.sources.length - a.story.sources.length || byTime(a, b);
+  return entries.map(({ explore, ...e }) => e).sort(cmp);
+}

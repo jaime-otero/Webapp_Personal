@@ -18,6 +18,7 @@ GitHub Actions (cada hora de 7 a 24 h, dos veces de madrugada; IA cada 2 h)
 
 Navegador (web/)
   carga news.json → ordena con tu perfil (algoritmo que aprende de tus ❤️) → feeds
+  (o, si lo eliges arriba de la lista, por más recientes o por nº de medios)
 ```
 
 | Ruta | Qué es |
