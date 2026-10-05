@@ -100,3 +100,33 @@ test('clusterArticles groups the same story across outlets and keeps every secti
   const drown = stories.find((s) => s.sources.length === 2);
   assert.deepEqual(drown.sections.sort(), ['espana', 'espana/deportes', 'espana/sociedad']);
 });
+
+test('classify keeps foreign science out of España on Spanish general feeds', () => {
+  // El Mundo (general) and elDiario.es Sociedad on the Medicine Nobel: Ciencia, not España.
+  const nobel = 'Premio Nobel de Medicina para Karl Deisseroth, Peter Hegemann y Georg Nagel por sus descubrimientos en optogenética';
+  const elMundo = cls(nobel, ['espana']);
+  assert.ok(elMundo.some((s) => s.startsWith('ciencia')) && !elMundo.some((s) => s.startsWith('espana')), elMundo.join());
+  assert.ok(!cls('Premio Nobel de Medicina 2026 para los creadores de la optogenética', ['espana/sociedad']).some((s) => s.startsWith('espana')));
+  // Science that does happen in Spain stays in both.
+  assert.ok(cls('El CSIC descubre en España una nueva especie de dinosaurio', ['espana']).includes('espana'));
+  // Ordinary Spanish news is untouched.
+  assert.ok(cls('Detenido un hombre tras un accidente de tráfico en Vigo', ['espana']).includes('espana/sociedad'));
+});
+
+test('classify: each Nobel goes to its topic, not to España unless a Spaniard wins', () => {
+  const noEspana = (secs) => !secs.some((s) => s.startsWith('espana'));
+  const lit = cls('El Nobel de Literatura 2026 premia a la escritora coreana Han Kang', ['espana']);
+  assert.ok(noEspana(lit) && !lit.some((s) => s.startsWith('ciencia')), lit.join());
+  assert.ok(!cls('Nobel Prize in Literature goes to Korean novelist', ['internacional']).some((s) => s.startsWith('ciencia')));
+  assert.deepEqual(cls('Nobel de Economía para tres expertos en desigualdad', ['espana']), ['economia']);
+  assert.deepEqual(cls('Brian Schmidt, premio Nobel de Física: el universo fue más loco', ['espana/sociedad']), ['ciencia']);
+  assert.deepEqual(cls('Un científico español, Premio Nobel de Química', ['espana']).sort(), ['ciencia', 'espana']);
+});
+
+test('classify: world-region feeds send stories about Spain to España', () => {
+  assert.deepEqual(cls('Spain floods: death toll rises in Valencia', ['internacional/europa']), ['espana/sociedad']);
+  assert.deepEqual(cls('Spanish PM Pedro Sanchez calls snap election', ['internacional/europa']), ['espana/politica']);
+  assert.deepEqual(cls('Germany and France clash over EU budget', ['internacional/europa']), ['internacional/europa']);
+  // Mostly about Europe, Spain only mentioned: stays in Europa.
+  assert.deepEqual(cls('EU leaders back Spain on migration plan', ['internacional/europa']), ['internacional/europa']);
+});

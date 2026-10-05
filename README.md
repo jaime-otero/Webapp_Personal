@@ -31,6 +31,7 @@ Navegador (web/)
 | `web/` | La web/PWA estática (sin build) |
 | `web/lib/rank.js` | Algoritmo de personalización (regresión logística online) |
 | `web/lib/profile.js` | Perfil del usuario, migración y fusión al sincronizar |
+| `web/lib/corrections.js` | Botón 🏷️ Sección: mover una noticia de sección (y las parecidas); se sincroniza y se puede copiar desde Ajustes para afinar el clasificador |
 | `test/` | Tests (`npm test`; el workflow *CI* los pasa en cada PR) |
 
 ## Probar en local

@@ -2,6 +2,7 @@ import { loadProfile, saveProfile, pruneProfile, defaultProfile, migrate, isOn, 
 import { rankStories, sortEntries, SORTS, train, topFeatures, featureLabel, sectionPref, emptyModel } from './lib/rank.js';
 import { SECTIONS, SECTION_BY_ID, sectionLabel } from './lib/taxonomy.js';
 import { isSpoiler } from './lib/spoilers.js';
+import { applyCorrections, setCorrection, clearCorrection, listCorrections } from './lib/corrections.js';
 
 const PAGE = 30;
 const SESSION = Date.now();
@@ -242,6 +243,7 @@ function storyCard(entry) {
         <button data-act="dislike" title="No me interesa: verás menos noticias así">👎</button>
         <button data-act="save" aria-pressed="${saved}">${saved ? '★ Guardada' : '☆ Guardar'}</button>
         <button data-act="hide" title="Ocultar solo esta noticia">Ocultar</button>
+        <button data-act="reclass" title="¿Está en la sección equivocada? Dime dónde va">🏷️ Sección</button>
       </div>
     </div>
   </article>`;
@@ -349,6 +351,7 @@ function settingsHtml() {
     <h2>Secciones</h2><p class="muted small">Cuánto te interesa cada sección. Las subsecciones heredan el valor de su sección salvo que elijas otro. “Ocultar” la quita de la navegación. Con ↑ ↓ cambias el orden de las pestañas y subsecciones.</p>
     ${sectionRows}
     ${Object.keys(p.order ?? {}).length ? '<div class="actions"><button data-act="reset-order">Restablecer el orden</button></div>' : ''}
+    ${correctionsHtml()}
     <h2>Sin spoilers</h2>
     <label class="row"><span>Tapar resultados de la NBA (marcadores, quién gana…)</span><input type="checkbox" data-spoilers${p.spoilers.nba ? ' checked' : ''}></label>
     <label class="stack"><span>Otras palabras a tapar en la NBA (una por línea)</span><textarea data-spoiler-words rows="2" placeholder="playoffs">${esc(p.spoilers.extra.join('\n'))}</textarea></label>
@@ -377,6 +380,7 @@ function settingsHtml() {
 
 function render() {
   if (!state.data) return;
+  applyCorrections(state.data.stories, state.profile);
   $tabs.innerHTML = tabsHtml();
   $subtabs.innerHTML = subtabsHtml();
   $subtabs.hidden = state.route.view !== 'section';
@@ -472,6 +476,12 @@ $main.addEventListener('click', (e) => {
     return render();
   }
   if (act.startsWith('sync-')) return syncAction(act);
+  if (act === 'unreclass') {
+    clearCorrection(p, btn.dataset.id);
+    persist();
+    return render();
+  }
+  if (act === 'copy-reclass') return copyCorrections();
 
   const card = btn.closest('.card');
   const story = card && findStory(card.dataset.id);
@@ -480,6 +490,7 @@ $main.addEventListener('click', (e) => {
     state.revealed.add(story.id);
     return rerenderCard(card, story);
   }
+  if (act === 'reclass') return openReclass(story);
   if (act === 'like') {
     const on = !isOn(p.liked, story.id);
     setFlag(p.liked, story, on);
@@ -706,6 +717,62 @@ document.addEventListener('visibilitychange', async () => {
     if (await pull()) render();
   }
 });
+
+// ---------- section corrections ----------
+
+// "Esta noticia va en otra sección": pick where it belongs. Applies to this story and to similar ones.
+function openReclass(story) {
+  const dlg = document.getElementById('reclass');
+  const current = new Set(story.sections ?? []);
+  const pick = (key, label) => `<label class="pick"><input type="checkbox" name="s" value="${key}"${current.has(key) ? ' checked' : ''}><span>${esc(label)}</span></label>`;
+  dlg.innerHTML = `<form method="dialog" class="onboarding">
+    <h2>¿Dónde va esta noticia?</h2>
+    <p class="small"><strong>${esc(story.title)}</strong></p>
+    <p class="muted small">Marca sus secciones y desmarca las que sobran. Lo recordaré también para noticias parecidas (la misma historia en otros medios).</p>
+    ${orderedSections(state.profile).map((s) => `<fieldset><legend>${s.label}</legend><div class="chips">${pick(s.id, `${s.label} (general)`)}${s.subs.map((sub) => pick(sub.key, sub.label)).join('')}</div></fieldset>`).join('')}
+    <div class="actions"><button value="cancel" formnovalidate>Cancelar</button>${story.corrected === 'own' ? '<button value="reset">Volver a la original</button>' : ''}<button class="primary" value="ok">Guardar</button></div>
+  </form>`;
+  const form = dlg.querySelector('form');
+  form.addEventListener('submit', (e) => {
+    const choice = e.submitter?.value;
+    if (choice === 'cancel') return;
+    const picked = new FormData(form).getAll('s');
+    // A subsection already implies its section, as the classifier does.
+    const sections = picked.filter((k) => k.includes('/') || !picked.some((x) => x.startsWith(`${k}/`)));
+    if (choice === 'reset') clearCorrection(state.profile, story.id);
+    else setCorrection(state.profile, story, sections);
+    persist();
+    render();
+    if (choice !== 'reset') toast(sections.length ? '🏷️ Anotado: la muevo de sección' : '🏷️ Anotado: queda solo en Para ti');
+  });
+  dlg.showModal();
+}
+
+function correctionsHtml() {
+  const list = listCorrections(state.profile);
+  if (!list.length) return '';
+  const label = (keys) => (keys.length ? keys.map((k) => sectionLabel(k, { withParent: k.includes('/') })).join(', ') : 'ninguna');
+  const rows = list
+    .slice(0, 20)
+    .map((c) => `<div class="row"><span class="small">${esc(c.ti)}<br><span class="muted">${esc(label(c.o))} → ${esc(label(c.s))}</span></span><button class="feat" data-act="unreclass" data-id="${esc(c.id)}" title="Deshacer">✕</button></div>`)
+    .join('');
+  return `<h2>Secciones corregidas</h2>
+    <p class="muted small">Noticias que has movido de sección con 🏷️. También se aplican a noticias parecidas. Copia la lista y pásasela a quien mantiene la web para mejorar el clasificador para todos.</p>
+    ${rows}
+    <div class="actions"><button data-act="copy-reclass">Copiar la lista</button></div>`;
+}
+
+async function copyCorrections() {
+  const text = listCorrections(state.profile)
+    .map((c) => `- ${c.ti}\n  ${c.o.join(', ') || '—'} → ${c.s.join(', ') || '—'}`)
+    .join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Lista copiada');
+  } catch {
+    toast('No se ha podido copiar');
+  }
+}
 
 // ---------- onboarding ----------
 

@@ -58,7 +58,11 @@ export function classify(article) {
   // --- region ---
   let region = null; // 'espana' | 'eeuu' | 'internacional' | subregion id
   if (usSport) region = 'eeuu';
-  else if (fixedRegion) region = fixedRegion.startsWith('internacional/') ? fixedRegion.split('/')[1] : fixedRegion.split('/')[0];
+  else if (fixedRegion?.startsWith('internacional/')) {
+    // A world-region feed (BBC Europe) still carries stories about Spain or the US: they go there.
+    const sub = fixedRegion.split('/')[1];
+    region = pickRegion(scores, sub) ?? sub;
+  } else if (fixedRegion) region = fixedRegion.split('/')[0];
   else if (generalFeed) {
     const hint = hintRegions[0] === 'internacional' ? null : hintRegions[0];
     region = pickRegion(scores, hint) ?? hintRegions[0];
@@ -66,7 +70,7 @@ export function classify(article) {
 
   if (region === 'espana' || region === 'eeuu') {
     // A feed that is already specific (Mundo Deportivo → deportes) needs stronger evidence for others.
-    const subMin = fixedRegion ? 3 : 2;
+    const subMin = fixedRegion && !fixedRegion.startsWith('internacional/') ? 3 : 2;
     for (const [sub, group] of Object.entries(REGION_SUBS[region])) {
       if (hints.includes(`${region}/${sub}`) || has(group, subMin)) sections.add(`${region}/${sub}`);
     }
@@ -92,6 +96,20 @@ export function classify(article) {
     }
     const evidence = has(generic, 2) || Object.values(subs).some((g) => has(g, 2));
     if (!any && ((hints.includes(sec) && (trusted || evidence)) || has(generic, min))) sections.add(sec);
+  }
+
+  // The science and economics Nobels belong to those sections wherever they come from.
+  if (has('nobel-ciencia') && ![...sections].some((s) => s.startsWith('ciencia'))) sections.add('ciencia');
+  if (has('nobel-economia') && ![...sections].some((s) => s.startsWith('economia'))) sections.add('economia');
+
+  // Science, tech or a Nobel from a Spanish (or US) feed that never mentions the country is not
+  // national news: the Nobel de Medicina told by El Mundo goes to Ciencia only, not to España, and
+  // a Nobel de Literatura for a foreign writer goes to Internacional.
+  const local = region === 'espana' || region === 'eeuu';
+  const regionEvidence = has(`r:${region}`) || has(REGION_SUBS[region]?.politica ?? '') || usSport;
+  if (local && (generalFeed || fixedRegion) && !regionEvidence && (has('nobel') || [...sections].some((s) => /^(ciencia|tecnologia)/.test(s)))) {
+    for (const s of [...sections]) if (s === region || s.startsWith(`${region}/`)) sections.delete(s);
+    if (!sections.size) sections.add('internacional');
   }
 
   // Economy news that clearly happens in Spain or the US also belongs to that region.
