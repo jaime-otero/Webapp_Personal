@@ -54,3 +54,15 @@ test('uses Groq alone when there is no Gemini key, and reports both failures', a
   t.mock.method(globalThis, 'fetch', async () => new Response('quota', { status: 429 }));
   await assert.rejects(summarize(stories, { apiKey: 'k', groqKey: 'g' }), /gemini .*429.*groq .*429/);
 });
+
+test('waits and retries when the provider asks to (429 + retry-after)', async (t) => {
+  let n = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    n++;
+    if (n === 1) return new Response('slow down', { status: 429, headers: { 'retry-after': '1' } });
+    return groqReply('{"briefing":"Tras esperar.","stories":[]}');
+  });
+  const res = await summarize(stories, { apiKey: '', groqKey: 'g' });
+  assert.equal(res.briefing, 'Tras esperar.');
+  assert.equal(n, 2);
+});

@@ -11,12 +11,27 @@ const GROQ_MODELS = [...new Set([process.env.GROQ_MODEL, 'openai/gpt-oss-120b', 
 const TIMEOUT = 120_000;
 
 // Try each model in turn; 404 (retired), 429 (quota) and 5xx (overloaded) move on to the next.
+// A 429 that asks to wait a little (Groq's per-minute token limit) is retried on the same
+// model after the requested pause, up to MAX_WAITS times.
+const MAX_WAITS = 3;
+const MAX_WAIT_S = 30;
+
 async function tryModels(provider, models, request, errors) {
   for (const model of models) {
-    const res = await fetch(...request(model));
-    if (res.ok) return { model, data: await res.json() };
-    errors.push(`${provider} ${model} ${res.status}: ${(await res.text()).slice(0, 160)}`);
-    if (![404, 429].includes(res.status) && res.status < 500) break;
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(...request(model));
+      if (res.ok) return { model, data: await res.json() };
+      const wait = Number(res.headers.get('retry-after'));
+      if (res.status === 429 && wait > 0 && wait <= MAX_WAIT_S && attempt < MAX_WAITS) {
+        await res.text();
+        await new Promise((r) => setTimeout(r, wait * 1000));
+        continue;
+      }
+      errors.push(`${provider} ${model} ${res.status}: ${(await res.text()).slice(0, 160)}`);
+      break;
+    }
+    const last = errors.at(-1) ?? '';
+    if (!/ (404|429|5\d\d): /.test(last)) break;
   }
   return null;
 }
