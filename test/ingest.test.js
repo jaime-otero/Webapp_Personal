@@ -100,3 +100,15 @@ test('clusterArticles groups the same story across outlets and keeps every secti
   const drown = stories.find((s) => s.sources.length === 2);
   assert.deepEqual(drown.sections.sort(), ['espana', 'espana/deportes', 'espana/sociedad']);
 });
+
+test('classify keeps foreign science out of España on Spanish general feeds', () => {
+  // El Mundo (general) and elDiario.es Sociedad on the Medicine Nobel: Ciencia, not España.
+  const nobel = 'Premio Nobel de Medicina para Karl Deisseroth, Peter Hegemann y Georg Nagel por sus descubrimientos en optogenética';
+  const elMundo = cls(nobel, ['espana']);
+  assert.ok(elMundo.some((s) => s.startsWith('ciencia')) && !elMundo.some((s) => s.startsWith('espana')), elMundo.join());
+  assert.ok(!cls('Premio Nobel de Medicina 2026 para los creadores de la optogenética', ['espana/sociedad']).some((s) => s.startsWith('espana')));
+  // Science that does happen in Spain stays in both.
+  assert.ok(cls('El CSIC descubre en España una nueva especie de dinosaurio', ['espana']).includes('espana'));
+  // Ordinary Spanish news is untouched.
+  assert.ok(cls('Detenido un hombre tras un accidente de tráfico en Vigo', ['espana']).includes('espana/sociedad'));
+});

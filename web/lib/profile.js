@@ -3,6 +3,7 @@
 
 import { emptyModel } from './rank.js';
 import { SECTIONS } from './taxonomy.js';
+import { pruneCorrections } from './corrections.js';
 
 const KEY = 'midiario.profile.v1';
 const MAX_SNAPSHOTS = 300;
@@ -24,6 +25,7 @@ export function defaultProfile(now = Date.now()) {
     liked: {},
     saved: {},
     disliked: {}, // storyId → timestamp
+    reclass: {}, // storyId → { t, s: sections, o: original, k: title words } | { t, x: 1 } (see corrections.js)
     hidden: {},
     read: {},
     seen: {}, // storyId → { n: sessions seen, s: last session, k: skip learned } (not synced)
@@ -109,7 +111,7 @@ export function pruneProfile(profile, now = Date.now()) {
     const live = entries.filter(([, e]) => !e.x).sort((a, b) => b[1].t - a[1].t);
     for (const [id] of live.slice(MAX_SNAPSHOTS)) delete profile[k][id];
   }
-  return profile;
+  return pruneCorrections(profile, now);
 }
 
 // ---------- section order ----------
@@ -179,6 +181,7 @@ export function mergeProfiles(local, remote) {
     prefsAt: prefsFrom.prefsAt,
     liked: mergeFlags(local.liked, remote.liked),
     saved: mergeFlags(local.saved, remote.saved),
+    reclass: mergeFlags(local.reclass, remote.reclass),
     disliked: mergeTimes(local.disliked, remote.disliked),
     hidden: mergeTimes(local.hidden, remote.hidden),
     read: mergeTimes(local.read, remote.read),

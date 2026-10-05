@@ -94,6 +94,14 @@ export function classify(article) {
     if (!any && ((hints.includes(sec) && (trusted || evidence)) || has(generic, min))) sections.add(sec);
   }
 
+  // Science or tech from a Spanish (or US) general feed that never mentions the country is not
+  // national news: the Nobel de Medicina told by El Mundo goes to Ciencia only, not to España.
+  const local = region === 'espana' || region === 'eeuu';
+  const regionEvidence = has(`r:${region}`) || has(REGION_SUBS[region]?.politica ?? '') || usSport;
+  if (local && (generalFeed || fixedRegion) && !regionEvidence && [...sections].some((s) => /^(ciencia|tecnologia)/.test(s))) {
+    for (const s of [...sections]) if (s === region || s.startsWith(`${region}/`)) sections.delete(s);
+  }
+
   // Economy news that clearly happens in Spain or the US also belongs to that region.
   if ([...sections].some((s) => s.startsWith('economia'))) {
     if (has('r:espana')) sections.add('espana/economia');
