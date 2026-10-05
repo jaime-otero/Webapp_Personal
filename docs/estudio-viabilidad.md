@@ -48,12 +48,12 @@ Todo el perfil vive en el navegador (`localStorage`): no hace falta servidor, ba
 
 | Pieza | Servicio | Límite gratuito | Uso previsto |
 |---|---|---|---|
-| Actualización periódica | GitHub Actions (cron) | Repo privado: 2.000 min/mes; público: ilimitado | ≈20 ediciones/día ≈ 1.100 min/mes |
+| Actualización periódica | GitHub Actions (cron) | Repo privado: 2.000 min/mes; público: ilimitado | ≈20 ediciones/día ≈ 700-1.000 min/mes |
 | Hosting web | Cloudflare Workers (assets estáticos) | Servir archivos estáticos es gratis e ilimitado | ≈370 despliegues/mes |
 | IA | Gemini free tier | Varias peticiones/min y cientos/día | 12/día |
 | App móvil | PWA | — | Instalable en Android, iOS y PC |
 
-**Frecuencia:** el workflow actualiza **cada hora de 7:00 a 24:00** (hora de España) y dos veces de madrugada (≈20 ediciones/día). Los resúmenes IA solo se regeneran cada 2 h, así que el gasto queda en ≈1.100 de los 2.000 minutos gratuitos de GitHub Actions para repos privados y en ≈100 llamadas diarias a Gemini.
+**Frecuencia:** el workflow actualiza **cada hora de 7:00 a 24:00** (hora de España) y dos veces de madrugada (≈20 ediciones/día). Los resúmenes IA solo se regeneran cada 2 h, y las 9 llamadas a Gemini van de 3 en 3 en paralelo (≈20 s), así que el gasto queda en ≈700-1.000 de los 2.000 minutos gratuitos de GitHub Actions para repos privados y en ≈100 llamadas diarias a Gemini.
 
 Alternativa sin Cloudflare: hacer el repositorio público y usar **GitHub Pages** (gratis, sin límite de despliegues relevante). En repos privados GitHub Pages requiere plan de pago.
 

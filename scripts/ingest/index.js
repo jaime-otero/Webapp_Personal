@@ -15,7 +15,7 @@ const MAX_AGE_HOURS = 48;
 const MAX_PER_SOURCE = 30;
 const PORTADA_STORIES = 12;
 const SECTION_STORIES = 8;
-const AI_PAUSE_MS = Number(process.env.AI_PAUSE_MS ?? 2000);
+const AI_CONCURRENCY = 3;
 const USER_AGENT = 'Mozilla/5.0 (compatible; MiDiarioBot/0.1; lector RSS personal)';
 
 async function fetchText(url) {
@@ -109,20 +109,26 @@ async function main() {
   const summaries = {};
   let fresh = 0;
   const skipAI = process.env.SKIP_AI === '1';
-  for (const job of skipAI ? [] : aiJobs(stories, now)) {
+  // Three sections at a time: GitHub bills by wall-clock minutes, and the free Gemini tier
+  // allows ~15 requests/minute. Results are applied in job order (portada first).
+  const jobs = skipAI || !process.env.GEMINI_API_KEY ? [] : aiJobs(stories, now);
+  const results = await mapLimit(jobs, AI_CONCURRENCY, async (job) => {
     try {
-      const ai = await summarize(job.stories, { label: job.label, nba: job.nba });
-      if (!ai) break; // no API key
-      if (ai.briefing) {
-        briefings[job.id] = { text: ai.briefing, at: new Date(now).toISOString(), model: ai.model };
-        fresh++;
-      }
-      for (const [id, text] of Object.entries(ai.summaries)) summaries[id] ??= text;
+      return await summarize(job.stories, { label: job.label, nba: job.nba });
     } catch (err) {
       console.warn(`⚠ Resumen IA de "${job.label}" no disponible: ${err.message.slice(0, 300)}`);
+      return null;
     }
-    await new Promise((r) => setTimeout(r, AI_PAUSE_MS));
-  }
+  });
+  jobs.forEach((job, i) => {
+    const ai = results[i];
+    if (!ai) return;
+    if (ai.briefing) {
+      briefings[job.id] = { text: ai.briefing, at: new Date(now).toISOString(), model: ai.model };
+      fresh++;
+    }
+    for (const [id, text] of Object.entries(ai.summaries)) summaries[id] ??= text;
+  });
   for (const s of stories) {
     const summary = s.spoiler ? null : summaries[s.id] ?? prevSummaries[s.id];
     if (summary) s.aiSummary = summary;
