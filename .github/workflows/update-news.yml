@@ -2,9 +2,10 @@ name: Actualizar noticias
 
 on:
   schedule:
-    # Cada 2 h: suficiente para un diario y muy por debajo de las cuotas gratuitas.
-    # Minuto 17 para evitar la congestión de las :00.
-    - cron: '17 */2 * * *'
+    # Horas en UTC. Cada hora de 5 a 22 UTC (7:17–0:17 en España en verano, 6:17–23:17 en invierno)
+    # y dos veces de madrugada. Minuto 17 para evitar la congestión de las :00.
+    - cron: '17 5-22 * * *'
+    - cron: '17 1,3 * * *'
   workflow_dispatch:
   push:
 
@@ -29,12 +30,19 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # Los resúmenes IA se regeneran cada 2 h (horas UTC pares); en las horas impares solo entran
+      # noticias nuevas y se conservan los resúmenes de la edición anterior.
+      - name: ¿Toca resumen IA?
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ $(( 10#$(date -u +%H) % 2 )) -eq 1 ]; then
+            echo "SKIP_AI=1" >> "$GITHUB_ENV"
+          fi
       - name: Descargar feeds y generar resúmenes
         run: npm run ingest
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
-          PREVIOUS_DATA_URL: ${{ vars.SITE_URL && format('{0}/data/news.json', vars.SITE_URL) || '' }}
+          PREVIOUS_DATA_URL: ${{ format('{0}/data/news.json', vars.SITE_URL || 'https://mi-diario.mizepp.workers.dev') }}
       - name: Publicar en Cloudflare Workers
         if: env.CLOUDFLARE_API_TOKEN != ''
         uses: cloudflare/wrangler-action@v3

@@ -7,7 +7,7 @@ Agregador de noticias personal y gratuito: recoge noticias de ~40 medios fiables
 ## Cómo funciona
 
 ```
-GitHub Actions (cada 2 h)
+GitHub Actions (cada hora de 7 a 24 h, dos veces de madrugada; IA cada 2 h)
   └─ npm run ingest
        1. descarga los RSS de sources.json
        2. limpia, deduplica y clasifica en secciones/subsecciones
@@ -51,7 +51,7 @@ npm test
 3. **En GitHub → Settings → Secrets and variables → Actions:**
    - Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `GEMINI_API_KEY`
    - Variables (opcionales): `SITE_URL` (la URL final, p. ej. `https://mi-diario.<tu-subdominio>.workers.dev`, para reaprovechar resúmenes si falla la IA) y `GEMINI_MODEL` (por defecto se usan los alias `gemini-flash-latest` → `gemini-flash-lite-latest`).
-4. El workflow *Actualizar noticias* se ejecuta en la rama por defecto del repo cada 2 horas, en cada push y a mano desde la pestaña *Actions → Actualizar noticias → Run workflow*.
+4. El workflow *Actualizar noticias* se ejecuta en la rama por defecto del repo cada hora de 7:00 a 24:00 (hora de España) y dos veces de madrugada, en cada push y a mano desde *Actions → Actualizar noticias → Run workflow*. Los resúmenes IA se regeneran cada 2 h; en las horas intermedias entran noticias nuevas y se conservan los resúmenes anteriores. Con la web abierta, cada 10 min comprueba `data/meta.json` y, si hay edición nueva, muestra el botón "Hay noticias nuevas · Actualizar".
 5. Abre la web en el móvil → menú del navegador → **"Añadir a pantalla de inicio" / "Instalar app"**.
 
 ## Secciones

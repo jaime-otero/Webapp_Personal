@@ -2,3 +2,4 @@ node_modules/
 web/data/news.json
 .env
 .wrangler/
+web/data/meta.json

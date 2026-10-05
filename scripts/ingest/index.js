@@ -10,6 +10,7 @@ import { isSpoiler } from '../../web/lib/spoilers.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = resolve(ROOT, 'web/data/news.json');
+const META = resolve(ROOT, 'web/data/meta.json');
 const MAX_AGE_HOURS = 48;
 const MAX_PER_SOURCE = 30;
 const PORTADA_STORIES = 12;
@@ -107,7 +108,8 @@ async function main() {
   const briefings = { ...(previous?.briefings ?? {}) };
   const summaries = {};
   let fresh = 0;
-  for (const job of aiJobs(stories, now)) {
+  const skipAI = process.env.SKIP_AI === '1';
+  for (const job of skipAI ? [] : aiJobs(stories, now)) {
     try {
       const ai = await summarize(job.stories, { label: job.label, nba: job.nba });
       if (!ai) break; // no API key
@@ -134,12 +136,14 @@ async function main() {
   };
   await mkdir(dirname(OUT), { recursive: true });
   await writeFile(OUT, JSON.stringify(output));
+  // Tiny file the open web app polls to know when a new edition is out.
+  await writeFile(META, JSON.stringify({ generatedAt: output.generatedAt, stories: stories.length }));
 
   const failed = status.filter((s) => !s.ok);
   const count = (sec) => stories.filter((s) => inSection(s, sec)).length;
   console.log(`✓ ${articles.length} artículos → ${stories.length} noticias de ${status.length - failed.length}/${status.length} fuentes`);
   console.log(`  por sección: ${SECTIONS.map((s) => `${s.id} ${count(s.id)}`).join(', ')}, nba ${count('eeuu/nba')} (spoilers ${stories.filter((s) => s.spoiler).length})`);
-  console.log(`  multi-fuente: ${stories.filter((s) => s.sources.length > 1).length}, con resumen IA: ${stories.filter((s) => s.aiSummary).length}, briefings nuevos: ${fresh}/${Object.keys(briefings).length}`);
+  console.log(`  multi-fuente: ${stories.filter((s) => s.sources.length > 1).length}, con resumen IA: ${stories.filter((s) => s.aiSummary).length}, briefings nuevos: ${skipAI ? '0 (IA omitida)' : fresh}/${Object.keys(briefings).length}`);
   for (const f of failed) console.log(`  ✗ ${f.id}: ${f.error}`);
   if (failed.length === status.length) process.exit(1);
 }

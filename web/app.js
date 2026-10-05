@@ -68,10 +68,58 @@ async function loadData() {
     $main.innerHTML = `<div class="empty"><p>No se han podido cargar las noticias.</p><p class="muted">Comprueba la conexión o vuelve a intentarlo en un rato.</p></div>`;
     return;
   }
-  document.getElementById('updated').textContent = `Actualizado ${timeAgo(state.data.generatedAt)}`;
+  showUpdated();
   render();
   if (!state.profile.onboarded && !location.hash.startsWith('#sync=')) openOnboarding();
 }
+
+function showUpdated() {
+  if (state.data) document.getElementById('updated').textContent = `Actualizado ${timeAgo(state.data.generatedAt)}`;
+}
+
+// ---------- new editions while the app is open ----------
+
+const CHECK_EVERY = 10 * 60e3;
+let lastCheck = Date.now();
+
+// Polls the tiny meta.json; if a newer edition exists, offers it without touching the page.
+async function checkForUpdate() {
+  if (!state.data) return;
+  lastCheck = Date.now();
+  try {
+    const res = await fetch('data/meta.json', { cache: 'no-store' });
+    if (!res.ok) return;
+    const meta = await res.json();
+    if (Date.parse(meta.generatedAt) > Date.parse(state.data.generatedAt)) showNewEdition();
+  } catch {
+    /* offline: try again later */
+  }
+}
+
+function showNewEdition() {
+  if (document.getElementById('new-edition')) return;
+  const btn = Object.assign(document.createElement('button'), { id: 'new-edition', className: 'new-edition', textContent: 'Hay noticias nuevas · Actualizar' });
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      const res = await fetch('data/news.json', { cache: 'no-cache' });
+      if (!res.ok) throw new Error(res.status);
+      state.data = await res.json();
+      state.limit = PAGE;
+      showUpdated();
+      render();
+      window.scrollTo({ top: 0 });
+      btn.remove();
+    } catch {
+      btn.disabled = false;
+      toast('No se han podido cargar las noticias nuevas');
+    }
+  });
+  document.body.append(btn);
+}
+
+setInterval(showUpdated, 60e3);
+setInterval(checkForUpdate, CHECK_EVERY);
 
 const findStory = (id) => state.data?.stories.find((s) => s.id === id) ?? state.profile.liked[id]?.d ?? state.profile.saved[id]?.d;
 const inSection = (story, key) => (story.sections ?? []).some((s) => s === key || s.startsWith(`${key}/`));
@@ -559,6 +607,10 @@ async function linkSync(code) {
 
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'hidden' && pushPending) push({ keepalive: true });
+  if (document.visibilityState === 'visible') {
+    showUpdated();
+    if (Date.now() - lastCheck > 60e3) checkForUpdate();
+  }
   if (document.visibilityState === 'visible' && state.profile.sync.code && Date.now() - state.profile.sync.lastPull > 120000) {
     if (await pull()) render();
   }

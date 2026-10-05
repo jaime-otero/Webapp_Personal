@@ -144,3 +144,9 @@ input.code { width: 100%; font: 0.8rem ui-monospace, monospace; padding: 8px; bo
 .onboarding fieldset { margin: 10px 0; }
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 0.9rem; z-index: 20; box-shadow: 0 4px 16px rgb(0 0 0 / 0.2); max-width: calc(100vw - 32px); }
 .subtabs[hidden] { display: none; }
+.new-edition {
+  position: fixed; left: 50%; top: calc(112px + env(safe-area-inset-top)); transform: translateX(-50%); z-index: 15;
+  border: none; border-radius: 999px; padding: 8px 16px; background: var(--accent); color: var(--bg);
+  font-weight: 600; font-size: 0.9rem; cursor: pointer; box-shadow: 0 4px 16px rgb(0 0 0 / 0.25); white-space: nowrap;
+}
+.new-edition:disabled { opacity: 0.7; }
