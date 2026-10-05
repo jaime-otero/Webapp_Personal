@@ -1,4 +1,4 @@
-// AI summaries: one request per section and run (9 sections × ~9 AI runs/day ≈ 80 requests/day).
+// AI summaries: one request per section and run (10 sections × ~9 AI runs/day ≈ 90 requests/day).
 // Providers, in order: Gemini (free tier); if it fails or has no key, Groq (free tier); and last,
 // GitHub Models, which in Actions needs no extra key (the workflow's GITHUB_TOKEN with models: read).
 // With neither key, or if both fail, the caller keeps the previous summaries.

@@ -5,7 +5,7 @@ import { scoreGroups } from '../../web/lib/taxonomy.js';
 // Two independent dimensions:
 //  - Region sections (España, EE. UU., Internacional): where the story happens. The feed gives a
 //    default; for general feeds the keywords may move it (a BBC story about Catalonia → España).
-//  - Topical sections (Ciencia, Tecnología, Economía): what it is about, regardless of region.
+//  - Topical sections (Ciencia, Tecnología, Economía, Deportes): what it is about, regardless of region.
 //
 // A keyword group counts when it scores ≥ 2 (one hit in the title or two in the body). Topical
 // sections need ≥ 3 on general news feeds, so "dos muertos por el temporal" stays out of Clima.
@@ -16,6 +16,10 @@ const TOPICAL = {
   ciencia: { generic: 'ciencia', subs: { fisica: 'fisica', espacio: 'espacio', vida: 'vida', clima: 'clima' } },
   tecnologia: { generic: 'tecnologia', subs: { ia: 'ia', empresas: 'tec-empresas', innovacion: 'innovacion' } },
   economia: { generic: 'economia', subs: { mercados: 'mercados', empresas: 'eco-empresas', energia: 'energia' } },
+  deportes: {
+    generic: 'deporte',
+    subs: { futbol: 'dep-futbol', baloncesto: 'dep-baloncesto', tenis: 'dep-tenis', nfl: 'dep-nfl', rugby: 'dep-rugby', beisbol: 'dep-beisbol', invierno: 'dep-invierno', atletismo: 'dep-atletismo', ciclismo: 'dep-ciclismo', resistencia: 'dep-resistencia', motor: 'dep-motor', combate: 'dep-combate', acuaticos: 'dep-acuaticos', otros: 'dep-otros' },
+  },
 };
 const REGION_SUBS = {
   espana: { politica: 'politica-es', economia: 'economia', sociedad: 'sociedad', deportes: 'deportes', cultura: 'cultura' },
@@ -45,11 +49,15 @@ export function classify(article) {
   const hintRegions = hints.map((h) => h.split('/')[0]).filter((s) => s in REGION_SUBS || s === 'internacional');
   const fixedRegion = hints.find((h) => h.includes('/') && (h.startsWith('espana/') || h.startsWith('eeuu/') || h.startsWith('internacional/')));
   const isNba = hints.includes('eeuu/nba') || has('nba');
+  const isNcaa = hints.includes('eeuu/universitario') || has('dep-ncaa');
+  // "College football" also matches the NFL group: college games stay in Deporte universitario.
+  const isNfl = hints.includes('eeuu/nfl') || (has('dep-nfl') && !isNcaa);
+  const usSport = isNba || isNfl || isNcaa;
   const generalFeed = hintRegions.length > 0 && !fixedRegion;
 
   // --- region ---
   let region = null; // 'espana' | 'eeuu' | 'internacional' | subregion id
-  if (isNba) region = 'eeuu';
+  if (usSport) region = 'eeuu';
   else if (fixedRegion) region = fixedRegion.startsWith('internacional/') ? fixedRegion.split('/')[1] : fixedRegion.split('/')[0];
   else if (generalFeed) {
     const hint = hintRegions[0] === 'internacional' ? null : hintRegions[0];
@@ -63,6 +71,8 @@ export function classify(article) {
       if (hints.includes(`${region}/${sub}`) || has(group, subMin)) sections.add(`${region}/${sub}`);
     }
     if (isNba) sections.add('eeuu/nba');
+    if (isNfl) sections.add('eeuu/nfl');
+    if (isNcaa) sections.add('eeuu/universitario');
     if (![...sections].some((s) => s.startsWith(`${region}/`))) sections.add(region);
   } else if (region === 'internacional') sections.add('internacional');
   else if (region) sections.add(REGION_SECTION[region]);
@@ -88,6 +98,13 @@ export function classify(article) {
   if ([...sections].some((s) => s.startsWith('economia'))) {
     if (has('r:espana')) sections.add('espana/economia');
     if (has('r:eeuu')) sections.add('eeuu/economia');
+  }
+  // Sports news from a region (Marca, an NBA feed…) also belongs to Deportes.
+  if (sections.has('espana/deportes') || usSport) {
+    for (const [sub, group] of Object.entries(TOPICAL.deportes.subs)) if (has(group)) sections.add(`deportes/${sub}`);
+    if (isNba) sections.add('deportes/baloncesto');
+    if (isNfl) sections.add('deportes/nfl');
+    if (![...sections].some((s) => s.startsWith('deportes/'))) sections.add('deportes');
   }
   // A subsection already implies its parent section.
   for (const s of [...sections]) if (s.includes('/')) sections.delete(s.split('/')[0]);

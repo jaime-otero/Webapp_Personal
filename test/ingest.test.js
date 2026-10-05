@@ -39,7 +39,7 @@ const cls = (title, feedSections, summary = '') => classify({ title, summary, ca
 test('classify: España by subsection', () => {
   assert.deepEqual(cls('Sumar presentará su Frente Amplio y anunciará el candidato electoral el 17 de octubre', ['espana']), ['espana/politica']);
   assert.ok(cls('Mueren dos jóvenes ahogados en una playa de Guardamar del Segura', ['espana']).includes('espana/sociedad'));
-  assert.deepEqual(cls('Póquer de Pina con un Barça de cine', ['espana/deportes']), ['espana/deportes']);
+  assert.ok(cls('Póquer de Pina con un Barça de cine', ['espana/deportes']).includes('espana/deportes'));
   assert.ok(cls('Los Javis y La bola negra desembarcan en Hollywood: la película aspira al Oscar', ['espana']).includes('espana/cultura'));
 });
 
@@ -62,6 +62,30 @@ test('classify: topical sections, stricter on general news feeds', () => {
   assert.ok(!cls('Dos muertos y un desaparecido por el fuerte temporal en Cataluña', ['espana']).some((s) => s.startsWith('ciencia')));
   assert.ok(cls('OpenAI safety leader quits, warning AI company culture is broken', ['tecnologia']).includes('tecnologia/ia'));
   assert.ok(cls('Por qué el precio del petróleo se mantiene estancado en los 100 dólares', ['espana', 'economia']).includes('economia/energia'));
+});
+
+test('classify: Deportes by sport, from sports feeds and regional sports news', () => {
+  assert.deepEqual(cls('Pogacar gana el Mundial de ciclismo tras un ataque a 100 km de meta', ['deportes']), ['deportes/ciclismo']);
+  assert.deepEqual(cls('Ironman Kona: the women\'s race preview', ['deportes/resistencia']), ['deportes/resistencia']);
+  assert.ok(cls('Mahomes lanza tres touchdowns y los Chiefs siguen invictos', ['espana/deportes']).includes('deportes/nfl'));
+  assert.deepEqual(cls('Póquer de Pina con un Barça de cine', ['espana/deportes']).sort(), ['deportes/futbol', 'espana/deportes']);
+  assert.ok(cls('Could the Bucks become the center of the trade market?', ['eeuu/nba']).includes('deportes/baloncesto'));
+  assert.ok(cls('Shiffrin vuelve a ganar en el eslalon de Levi', ['deportes']).includes('deportes/invierno'));
+  assert.ok(cls('Pecco Bagnaia aprovecha el K.O. de Marc Márquez', ['espana/deportes']).includes('deportes/motor'));
+  assert.ok(cls('Topuria defenderá su cinturón de la UFC', ['deportes']).includes('deportes/combate'));
+  assert.ok(cls('Livorno será la sede del F1 de la vela: regatas de SailGP', ['deportes']).includes('deportes/acuaticos'));
+  assert.ok(cls('Jon Rahm firma su mejor vuelta en el LIV Golf', ['deportes']).includes('deportes/otros'));
+  assert.ok(!cls('Sumar presentará su Frente Amplio y anunciará el candidato electoral el 17 de octubre', ['espana']).some((s) => s.startsWith('deportes')));
+});
+
+test('classify: NFL and college sports land in EE. UU. and in Deportes', () => {
+  const nfl = cls('Mahomes lanza tres touchdowns y los Chiefs siguen invictos', ['espana/deportes']);
+  assert.ok(nfl.includes('eeuu/nfl') && nfl.includes('deportes/nfl'));
+  assert.deepEqual(cls('Bengals vs. Dolphins odds: Opening lines for Week 5 matchup', ['eeuu/nfl']).sort(), ['deportes/nfl', 'eeuu/nfl']);
+  const college = cls('Heisman watch: the college football quarterbacks to follow', ['deportes']);
+  assert.ok(college.includes('eeuu/universitario') && !college.includes('eeuu/nfl') && college.includes('deportes/nfl'));
+  assert.ok(cls('Latest on NCAA eligibility chaos: LSU roster count', ['eeuu/universitario']).includes('eeuu/universitario'));
+  assert.ok(!cls('Joint Chiefs chairman testifies before the Senate', ['internacional']).includes('eeuu/nfl'));
 });
 
 test('clusterArticles groups the same story across outlets and keeps every section', () => {
