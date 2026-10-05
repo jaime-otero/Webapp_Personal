@@ -18,7 +18,7 @@ const TOPICAL = {
   economia: { generic: 'economia', subs: { mercados: 'mercados', empresas: 'eco-empresas', energia: 'energia' } },
   deportes: {
     generic: 'deporte',
-    subs: { futbol: 'dep-futbol', baloncesto: 'dep-baloncesto', tenis: 'dep-tenis', nfl: 'dep-nfl', rugby: 'dep-rugby', beisbol: 'dep-beisbol', invierno: 'dep-invierno', atletismo: 'dep-atletismo', ciclismo: 'dep-ciclismo', resistencia: 'dep-resistencia' },
+    subs: { futbol: 'dep-futbol', baloncesto: 'dep-baloncesto', tenis: 'dep-tenis', nfl: 'dep-nfl', rugby: 'dep-rugby', beisbol: 'dep-beisbol', invierno: 'dep-invierno', atletismo: 'dep-atletismo', ciclismo: 'dep-ciclismo', resistencia: 'dep-resistencia', motor: 'dep-motor', combate: 'dep-combate', acuaticos: 'dep-acuaticos', otros: 'dep-otros' },
   },
 };
 const REGION_SUBS = {

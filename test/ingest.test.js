@@ -71,6 +71,10 @@ test('classify: Deportes by sport, from sports feeds and regional sports news', 
   assert.deepEqual(cls('Póquer de Pina con un Barça de cine', ['espana/deportes']).sort(), ['deportes/futbol', 'espana/deportes']);
   assert.ok(cls('Could the Bucks become the center of the trade market?', ['eeuu/nba']).includes('deportes/baloncesto'));
   assert.ok(cls('Shiffrin vuelve a ganar en el eslalon de Levi', ['deportes']).includes('deportes/invierno'));
+  assert.ok(cls('Pecco Bagnaia aprovecha el K.O. de Marc Márquez', ['espana/deportes']).includes('deportes/motor'));
+  assert.ok(cls('Topuria defenderá su cinturón de la UFC', ['deportes']).includes('deportes/combate'));
+  assert.ok(cls('Livorno será la sede del F1 de la vela: regatas de SailGP', ['deportes']).includes('deportes/acuaticos'));
+  assert.ok(cls('Jon Rahm firma su mejor vuelta en el LIV Golf', ['deportes']).includes('deportes/otros'));
   assert.ok(!cls('Sumar presentará su Frente Amplio y anunciará el candidato electoral el 17 de octubre', ['espana']).some((s) => s.startsWith('deportes')));
 });
 
