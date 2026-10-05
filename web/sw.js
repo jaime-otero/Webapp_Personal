@@ -1,9 +1,13 @@
 // App shell: stale-while-revalidate (instant load, updates picked up on the next visit). News data: network-first with the cached copy as offline fallback.
-const VERSION = 'v5';
+// Pages: network-first, so a logged-out visit reaches the login redirect instead of a cached shell.
+const VERSION = 'v6';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'lib/profile.js', 'lib/rank.js', 'lib/tokens.js', 'lib/taxonomy.js', 'lib/spoilers.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(`shell-${VERSION}`).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // File by file, skipping failures: logged out, the shell answers 401 and must not block the
+  // update. Failed bodies are discarded (an unread one can stall the remaining requests).
+  const save = (c, u) => fetch(u).then((r) => (r.ok ? c.put(u, r) : r.body?.cancel()), () => {});
+  e.waitUntil(caches.open(`shell-${VERSION}`).then((c) => Promise.all(SHELL.map((u) => save(c, u)))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -30,6 +34,10 @@ self.addEventListener('fetch', (e) => {
         })
         .catch(() => caches.match('data/news.json')),
     );
+    return;
+  }
+  if (e.request.mode === 'navigate') {
+    e.respondWith(fetch(e.request).catch(() => caches.match('index.html', { cacheName: `shell-${VERSION}` })));
     return;
   }
   e.respondWith(

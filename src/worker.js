@@ -91,7 +91,7 @@ function loginPage(next, error = '') {
   <p>Escribe tu código de invitación.</p>
   ${error ? `<p class="error">${esc(error)}</p>` : ''}
   <input type="hidden" name="next" value="${esc(next)}">
-  <input name="code" type="password" autocomplete="current-password" aria-label="Código de invitación" required autofocus>
+  <input name="code" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" aria-label="Código de invitación" required autofocus>
   <button>Entrar</button>
 </form>
 </body>
@@ -104,9 +104,9 @@ async function login(request, url, invites) {
   if (request.method !== 'POST') return json({ error: 'method not allowed' }, 405);
   const form = await request.formData();
   const next = safeNext(form.get('next'));
-  const code = String(form.get('code') ?? '').trim();
-  const name = [...invites].find(([, c]) => c === code)?.[0];
-  if (!code || !name) return loginPage(next, 'Código incorrecto.');
+  const typed = String(form.get('code') ?? '').trim().toLowerCase(); // phones capitalise the first letter
+  const [name, code] = [...invites].find(([, c]) => c.toLowerCase() === typed) ?? [];
+  if (!typed || !name) return loginPage(next, 'Código incorrecto.');
   const cookie = `${COOKIE}=${await sessionToken(name, code)}; Path=/; Max-Age=${COOKIE_MAX_AGE}; HttpOnly; Secure; SameSite=Lax`;
   return new Response(null, { status: 303, headers: { location: next, 'set-cookie': cookie } });
 }

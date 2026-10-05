@@ -1,5 +1,6 @@
 // AI summaries: one request per section and run (10 sections × ~9 AI runs/day ≈ 90 requests/day).
-// Providers, in order: Gemini (free tier) and, if it fails or has no key, Groq (free tier).
+// Providers, in order: Gemini (free tier); if it fails or has no key, Groq (free tier); and last,
+// GitHub Models, which in Actions needs no extra key (the workflow's GITHUB_TOKEN with models: read).
 // With neither key, or if both fail, the caller keeps the previous summaries.
 
 import { isSpoilerText } from '../../web/lib/spoilers.js';
@@ -8,6 +9,8 @@ import { isSpoilerText } from '../../web/lib/spoilers.js';
 // "latest" aliases; 404 (retired), 429 (quota) and 5xx (overloaded) move on to the next one.
 const GEMINI_MODELS = [...new Set([process.env.GEMINI_MODEL, 'gemini-flash-latest', 'gemini-flash-lite-latest'].filter(Boolean))];
 const GROQ_MODELS = [...new Set([process.env.GROQ_MODEL, 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile'].filter(Boolean))];
+// GitHub Models' free tier caps each request at 8k tokens in / 4k out, enough for one section.
+const GITHUB_MODELS = [...new Set([process.env.GITHUB_MODELS_MODEL, 'openai/gpt-4.1-mini', 'openai/gpt-4o-mini'].filter(Boolean))];
 const TIMEOUT = 120_000;
 
 // Try each model in turn; 404 (retired), 429 (quota) and 5xx (overloaded) move on to the next.
@@ -61,7 +64,20 @@ async function callGroq(prompt, apiKey, errors) {
   return r && { model: `groq/${r.model}`, text: r.data.choices?.[0]?.message?.content ?? '' };
 }
 
-export const hasAIKey = () => !!(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
+async function callGitHubModels(prompt, token, errors) {
+  const r = await tryModels('github', GITHUB_MODELS, (model) => [
+    'https://models.github.ai/inference/chat/completions',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/vnd.github+json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], response_format: { type: 'json_object' }, temperature: 0.3, max_tokens: 4000 }),
+      signal: AbortSignal.timeout(TIMEOUT),
+    },
+  ], errors);
+  return r && { model: `github/${r.model}`, text: r.data.choices?.[0]?.message?.content ?? '' };
+}
+
+export const hasAIKey = () => !!(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY || process.env.GITHUB_MODELS_TOKEN);
 
 const NBA_RULES = `
 MUY IMPORTANTE (sección NBA, el lector no quiere spoilers): NO menciones resultados, marcadores, quién ganó o
@@ -97,15 +113,22 @@ function stripSpoilers(text) {
 
 export async function summarize(
   stories,
-  { apiKey = process.env.GEMINI_API_KEY, groqKey = process.env.GROQ_API_KEY, label, nba = false } = {},
+  {
+    apiKey = process.env.GEMINI_API_KEY,
+    groqKey = process.env.GROQ_API_KEY,
+    githubToken = process.env.GITHUB_MODELS_TOKEN,
+    label,
+    nba = false,
+  } = {},
 ) {
-  if ((!apiKey && !groqKey) || stories.length === 0) return null;
+  if ((!apiKey && !groqKey && !githubToken) || stories.length === 0) return null;
 
   const prompt = buildPrompt(stories, { label, nba });
   const errors = [];
   let out = null;
   if (apiKey) out = await callGemini(prompt, apiKey, errors);
   if (!out && groqKey) out = await callGroq(prompt, groqKey, errors);
+  if (!out && githubToken) out = await callGitHubModels(prompt, githubToken, errors);
   if (!out) throw new Error(errors.join(' | '));
   const { model, text } = out;
   const parsed = JSON.parse(text.replace(/^```(?:json)?|```$/g, '').trim());
