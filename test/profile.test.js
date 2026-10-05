@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultProfile, migrate, mergeProfiles, setFlag, isOn, listOf, toRemote, pruneProfile } from '../web/lib/profile.js';
+import { defaultProfile, migrate, mergeProfiles, setFlag, isOn, listOf, toRemote, pruneProfile, orderedSections, moveSection } from '../web/lib/profile.js';
 import { train } from '../web/lib/rank.js';
 
 const story = (id, title = 'Algo') => ({ id, title, sections: ['ciencia'], lang: 'es', sources: [{ sourceId: 'x', source: 'X', url: 'https://x', title }] });
@@ -53,4 +53,34 @@ test('device-local state is not uploaded; prune caps old marks', () => {
   p.read.new = 30 * 864e5;
   pruneProfile(p, 30 * 864e5);
   assert.deepEqual(Object.keys(p.read), ['new']);
+});
+
+test('sections and subsections can be reordered; unplaced ones keep their default spot', () => {
+  const p = defaultProfile(1);
+  const ids = (list) => list.map((s) => s.id);
+  const def = ids(orderedSections(p));
+  assert.equal(def[0], 'espana');
+
+  assert.ok(moveSection(p, 'eeuu', -1));
+  assert.deepEqual(ids(orderedSections(p)).slice(0, 2), ['eeuu', 'espana']);
+  assert.equal(moveSection(p, 'eeuu', -1), false); // already first
+
+  assert.ok(moveSection(p, 'eeuu/nba', -1));
+  const eeuu = orderedSections(p).find((s) => s.id === 'eeuu');
+  assert.deepEqual(ids(eeuu.subs).slice(2, 4), ['nba', 'sociedad']);
+  assert.equal(eeuu.subs.find((s) => s.id === 'nba').key, 'eeuu/nba');
+
+  // A section added later (not in the saved order) goes after the ones the person placed.
+  p.order[''] = ['ciencia', 'espana'];
+  assert.deepEqual(ids(orderedSections(p)).slice(0, 3), ['ciencia', 'espana', 'eeuu']);
+  assert.equal(orderedSections(p).length, def.length);
+});
+
+test('the section order syncs with the other explicit preferences', () => {
+  const local = { ...defaultProfile(1), prefsAt: 10 };
+  const remote = { ...defaultProfile(1), prefsAt: 20, order: { '': ['ciencia'] } };
+  assert.deepEqual(mergeProfiles(local, remote).order, { '': ['ciencia'] });
+  assert.deepEqual(mergeProfiles({ ...local, prefsAt: 30 }, remote).order, {});
+  const { order, ...old } = defaultProfile(1);
+  assert.deepEqual(migrate(old).order, {});
 });
