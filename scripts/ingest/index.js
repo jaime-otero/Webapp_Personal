@@ -42,11 +42,16 @@ async function mapLimit(items, limit, fn) {
   return results;
 }
 
-// Previous output (local file or the deployed site) so AI summaries survive a failed or
-// skipped AI call.
+// Previous output (the deployed site, else the local file restored from the Actions cache) so
+// AI summaries survive a failed or skipped AI call. Behind a login (Cloudflare Access) the site
+// answers with the login page, which fails to parse and falls through to the local file.
 async function loadPrevious() {
+  if (process.env.PREVIOUS_DATA_URL) {
+    try {
+      return JSON.parse(await fetchText(process.env.PREVIOUS_DATA_URL));
+    } catch {}
+  }
   try {
-    if (process.env.PREVIOUS_DATA_URL) return JSON.parse(await fetchText(process.env.PREVIOUS_DATA_URL));
     return JSON.parse(await readFile(OUT, 'utf8'));
   } catch {
     return null;

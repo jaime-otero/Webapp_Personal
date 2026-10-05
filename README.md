@@ -54,6 +54,16 @@ npm test
 4. El workflow *Actualizar noticias* se ejecuta en la rama por defecto del repo cada hora de 7:00 a 24:00 (hora de España) y dos veces de madrugada, en cada push y a mano desde *Actions → Actualizar noticias → Run workflow*. Los resúmenes IA se regeneran cada 2 h; en las horas intermedias entran noticias nuevas y se conservan los resúmenes anteriores. Con la web abierta, cada 10 min comprueba `data/meta.json` y, si hay edición nueva, muestra el botón "Hay noticias nuevas · Actualizar".
 5. Abre la web en el móvil → menú del navegador → **"Añadir a pantalla de inicio" / "Instalar app"**.
 
+### Solo para quien invites (inicio de sesión)
+
+Con Cloudflare Access (gratis hasta 50 personas) la web pide iniciar sesión con un código que llega al correo; solo entran los correos de la lista. No hace falta tocar el código.
+
+1. En Cloudflare, *Workers & Pages → mi-diario → Settings → Domains & Routes*, en la fila de `workers.dev` pulsa **Enable Cloudflare Access** (la primera vez te pide crear un equipo de *Zero Trust* con el plan **Free**).
+2. Pulsa **Manage Cloudflare Access** y edita la política: *Action* **Allow**, regla **Emails** con los correos de quienes pueden entrar (el tuyo incluido). Para invitar a alguien más, añade su correo aquí.
+3. En *Zero Trust → Access → Applications →* la de `mi-diario` → *Session duration*, pon **1 month** para no tener que entrar a cada rato.
+
+El workflow sigue funcionando igual: guarda la edición anterior en la caché de Actions en vez de descargarla de la web.
+
 ## Hazte tu propia copia
 
 1. En la página del repo pulsa **Use this template → Create a new repository** (o *Fork*). Puede ser privado o público.
