@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { defaultProfile } from '../web/lib/profile.js';
-import { rankStories, scoreStory, train, featuresOf, entities, topFeatures } from '../web/lib/rank.js';
+import { rankStories, scoreStory, train, featuresOf, entities, topFeatures, sortEntries } from '../web/lib/rank.js';
 
 const NOW = Date.parse('2026-10-04T12:00:00Z');
 let n = 0;
@@ -93,4 +93,15 @@ test('exploration slots a well-covered unusual story every 10 positions', () => 
   const ranked = rankStories([...many, covered], p, NOW, { explore: true });
   assert.equal(ranked[9].story.id, covered.id);
   assert.equal(ranked[9].explore, true);
+});
+
+test('sortEntries orders by recency or by coverage and drops exploration marks', () => {
+  const mk = (id, h, n) => ({ story: { id, publishedAt: new Date(Date.UTC(2026, 0, 1, h)).toISOString(), sources: Array.from({ length: n }, () => ({})) } });
+  const entries = [mk('a', 1, 3), { ...mk('b', 5, 1), explore: true }, mk('c', 3, 3)];
+  const ids = (list) => list.map((e) => e.story.id);
+  assert.deepEqual(ids(sortEntries(entries, 'foryou')), ['a', 'b', 'c']);
+  assert.deepEqual(ids(sortEntries(entries, 'recent')), ['b', 'c', 'a']);
+  assert.deepEqual(ids(sortEntries(entries, 'coverage')), ['c', 'a', 'b']);
+  assert.ok(sortEntries(entries, 'recent').every((e) => !e.explore));
+  assert.deepEqual(ids(entries), ['a', 'b', 'c']);
 });

@@ -1,5 +1,5 @@
 import { loadProfile, saveProfile, pruneProfile, defaultProfile, migrate, isOn, listOf, setFlag, toRemote, mergeProfiles } from './lib/profile.js';
-import { rankStories, train, topFeatures, featureLabel, sectionPref, emptyModel } from './lib/rank.js';
+import { rankStories, sortEntries, SORTS, train, topFeatures, featureLabel, sectionPref, emptyModel } from './lib/rank.js';
 import { SECTIONS, SECTION_BY_ID, sectionLabel } from './lib/taxonomy.js';
 import { isSpoiler } from './lib/spoilers.js';
 
@@ -261,6 +261,23 @@ const collapsed = (() => {
   }
 })();
 
+// How the feeds (Para ti and sections) are ordered; a per-device choice.
+let sortMode = (() => {
+  try {
+    const v = localStorage.getItem('midiario.sort');
+    return SORTS.some(([id]) => id === v) ? v : 'foryou';
+  } catch {
+    return 'foryou';
+  }
+})();
+
+function feedHtml(ranked, emptyMsg) {
+  const bar = `<div class="sortbar" role="group" aria-label="Ordenar noticias"><span class="muted small">Ordenar:</span>${SORTS.map(
+    ([id, label]) => `<button data-sort="${id}" aria-pressed="${sortMode === id}">${label}</button>`,
+  ).join('')}</div>`;
+  return bar + listHtml(sortEntries(ranked, sortMode), emptyMsg);
+}
+
 function briefingHtml(key, title) {
   const b = state.data.briefings?.[key];
   if (!b) return '';
@@ -277,7 +294,7 @@ function sectionView() {
   const s = SECTION_BY_ID[sec];
   const briefing = !sub ? briefingHtml(sec, `Lo importante · ${s.label}`) : key === 'eeuu/nba' ? briefingHtml(key, 'Lo importante · NBA (sin resultados)') : '';
   const stories = state.data.stories.filter((st) => inSection(st, key));
-  return briefing + listHtml(rankStories(stories, state.profile), 'No hay noticias de esta sección ahora mismo.');
+  return briefing + feedHtml(rankStories(stories, state.profile), 'No hay noticias de esta sección ahora mismo.');
 }
 
 function settingsHtml() {
@@ -360,7 +377,7 @@ function render() {
   const p = state.profile;
   const v = state.route.view;
   let html;
-  if (v === 'foryou') html = briefingHtml('portada', 'Lo importante ahora') + listHtml(rankStories(state.data.stories, p, Date.now(), { explore: true }), 'No hay noticias que encajen con tus filtros.');
+  if (v === 'foryou') html = briefingHtml('portada', 'Lo importante ahora') + feedHtml(rankStories(state.data.stories, p, Date.now(), { explore: true }), 'No hay noticias que encajen con tus filtros.');
   else if (v === 'section') html = sectionView();
   else if (v === 'megusta') html = listHtml(listOf(p.liked), 'Aún no has marcado ninguna noticia con ❤️. Cada me gusta enseña a la web lo que te interesa.');
   else if (v === 'guardados') html = listHtml(listOf(p.saved), 'Aún no has guardado noticias.');
@@ -397,6 +414,15 @@ $main.addEventListener('click', (e) => {
       link.closest('.card')?.classList.add('read');
     }
     return;
+  }
+  const sort = e.target.closest('[data-sort]');
+  if (sort) {
+    sortMode = sort.dataset.sort;
+    try {
+      localStorage.setItem('midiario.sort', sortMode);
+    } catch {}
+    state.limit = PAGE;
+    return render();
   }
   const forget = e.target.closest('[data-forget]');
   if (forget) {
