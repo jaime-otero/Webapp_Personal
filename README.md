@@ -12,7 +12,7 @@ GitHub Actions (cada hora de 7 a 24 h, dos veces de madrugada; IA cada 2 h)
        1. descarga los RSS de sources.json
        2. limpia, deduplica y clasifica en secciones/subsecciones
        3. agrupa la misma noticia entre medios y marca spoilers de la NBA
-       4. Gemini (gratis): un briefing por sección + resúmenes de sus noticias top
+       4. Gemini (gratis; Groq de reserva): un briefing por sección + resúmenes de sus noticias top
        5. escribe web/data/news.json
   └─ despliega en Cloudflare Workers: web/ (assets) + src/worker.js (API de sincronización, KV)
 
@@ -49,8 +49,8 @@ npm test
 1. **Clave de IA (opcional):** crea una API key en [Google AI Studio](https://aistudio.google.com/apikey).
 2. **Cloudflare:** en *My Profile → API Tokens → Create Token*, usa la plantilla **"Edit Cloudflare Workers"** y copia el token. Copia también tu **Account ID** (aparece en la página de *Workers & Pages*). El worker `mi-diario` se crea solo en el primer despliegue.
 3. **En GitHub → Settings → Secrets and variables → Actions:**
-   - Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `GEMINI_API_KEY`
-   - Variables (opcionales): `SITE_URL` (la URL final, p. ej. `https://mi-diario.<tu-subdominio>.workers.dev`, para reaprovechar resúmenes si falla la IA) y `GEMINI_MODEL` (por defecto se usan los alias `gemini-flash-latest` → `gemini-flash-lite-latest`).
+   - Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `GEMINI_API_KEY` y, como IA de reserva, `GROQ_API_KEY` (gratis en [console.groq.com/keys](https://console.groq.com/keys)): si Gemini falla, los resúmenes se hacen con Groq
+   - Variables (opcionales): `SITE_URL` (la URL final, p. ej. `https://mi-diario.<tu-subdominio>.workers.dev`, para reaprovechar resúmenes si falla la IA) `GEMINI_MODEL` (por defecto los alias `gemini-flash-latest` → `gemini-flash-lite-latest`) y `GROQ_MODEL` (por defecto `openai/gpt-oss-120b` → `llama-3.3-70b-versatile`).
 4. El workflow *Actualizar noticias* se ejecuta en la rama por defecto del repo cada hora de 7:00 a 24:00 (hora de España) y dos veces de madrugada, en cada push y a mano desde *Actions → Actualizar noticias → Run workflow*. Los resúmenes IA se regeneran cada 2 h; en las horas intermedias entran noticias nuevas y se conservan los resúmenes anteriores. Con la web abierta, cada 10 min comprueba `data/meta.json` y, si hay edición nueva, muestra el botón "Hay noticias nuevas · Actualizar".
 5. Abre la web en el móvil → menú del navegador → **"Añadir a pantalla de inicio" / "Instalar app"**.
 

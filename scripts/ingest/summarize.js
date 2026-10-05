@@ -1,13 +1,52 @@
-// AI summaries with the Gemini API free tier: one request per section and run (8 sections × 12
-// runs/day ≈ 100 requests/day). Without GEMINI_API_KEY (or on failure) the caller keeps the
-// previous summaries and the site still works.
+// AI summaries: one request per section and run (9 sections × ~9 AI runs/day ≈ 80 requests/day).
+// Providers, in order: Gemini (free tier) and, if it fails or has no key, Groq (free tier).
+// With neither key, or if both fail, the caller keeps the previous summaries.
 
 import { isSpoilerText } from '../../web/lib/spoilers.js';
 
 // Google retires model versions often, so try a configured model first and then the
 // "latest" aliases; 404 (retired), 429 (quota) and 5xx (overloaded) move on to the next one.
-const MODELS = [...new Set([process.env.GEMINI_MODEL, 'gemini-flash-latest', 'gemini-flash-lite-latest'].filter(Boolean))];
-const endpoint = (model) => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+const GEMINI_MODELS = [...new Set([process.env.GEMINI_MODEL, 'gemini-flash-latest', 'gemini-flash-lite-latest'].filter(Boolean))];
+const GROQ_MODELS = [...new Set([process.env.GROQ_MODEL, 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile'].filter(Boolean))];
+const TIMEOUT = 120_000;
+
+// Try each model in turn; 404 (retired), 429 (quota) and 5xx (overloaded) move on to the next.
+async function tryModels(provider, models, request, errors) {
+  for (const model of models) {
+    const res = await fetch(...request(model));
+    if (res.ok) return { model, data: await res.json() };
+    errors.push(`${provider} ${model} ${res.status}: ${(await res.text()).slice(0, 160)}`);
+    if (![404, 429].includes(res.status) && res.status < 500) break;
+  }
+  return null;
+}
+
+async function callGemini(prompt, apiKey, errors) {
+  const body = JSON.stringify({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { responseMimeType: 'application/json', temperature: 0.3, maxOutputTokens: 16384 },
+  });
+  const r = await tryModels('gemini', GEMINI_MODELS, (model) => [
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey }, body, signal: AbortSignal.timeout(TIMEOUT) },
+  ], errors);
+  return r && { model: r.model, text: r.data.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') ?? '' };
+}
+
+async function callGroq(prompt, apiKey, errors) {
+  const r = await tryModels('groq', GROQ_MODELS, (model) => [
+    'https://api.groq.com/openai/v1/chat/completions',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], response_format: { type: 'json_object' }, temperature: 0.3 }),
+      signal: AbortSignal.timeout(TIMEOUT),
+    },
+  ], errors);
+  return r && { model: `groq/${r.model}`, text: r.data.choices?.[0]?.message?.content ?? '' };
+}
+
+export const hasAIKey = () => !!(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
 
 const NBA_RULES = `
 MUY IMPORTANTE (sección NBA, el lector no quiere spoilers): NO menciones resultados, marcadores, quién ganó o
@@ -41,30 +80,19 @@ function stripSpoilers(text) {
   return sentences.filter((s) => !isSpoilerText(s)).join('').trim();
 }
 
-export async function summarize(stories, { apiKey = process.env.GEMINI_API_KEY, label, nba = false } = {}) {
-  if (!apiKey || stories.length === 0) return null;
+export async function summarize(
+  stories,
+  { apiKey = process.env.GEMINI_API_KEY, groqKey = process.env.GROQ_API_KEY, label, nba = false } = {},
+) {
+  if ((!apiKey && !groqKey) || stories.length === 0) return null;
 
-  const body = JSON.stringify({
-    contents: [{ role: 'user', parts: [{ text: buildPrompt(stories, { label, nba }) }] }],
-    generationConfig: { responseMimeType: 'application/json', temperature: 0.3, maxOutputTokens: 16384 },
-  });
-  let res;
-  let model;
+  const prompt = buildPrompt(stories, { label, nba });
   const errors = [];
-  for (model of MODELS) {
-    res = await fetch(endpoint(model), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-      body,
-      signal: AbortSignal.timeout(120_000),
-    });
-    if (res.ok) break;
-    errors.push(`${model} ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    if (![404, 429].includes(res.status) && res.status < 500) break;
-  }
-  if (!res.ok) throw new Error(`Gemini: ${errors.join(' | ')}`);
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') ?? '';
+  let out = null;
+  if (apiKey) out = await callGemini(prompt, apiKey, errors);
+  if (!out && groqKey) out = await callGroq(prompt, groqKey, errors);
+  if (!out) throw new Error(errors.join(' | '));
+  const { model, text } = out;
   const parsed = JSON.parse(text.replace(/^```(?:json)?|```$/g, '').trim());
   const clean = (t) => (nba ? stripSpoilers(t) : t);
   const summaries = {};

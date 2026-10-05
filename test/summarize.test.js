@@ -29,3 +29,28 @@ test('NBA section: sentences that still reveal results are dropped', async (t) =
   assert.equal(res.briefing, 'Curry renueva con los Warriors.');
   assert.deepEqual(res.summaries, {});
 });
+
+const groqReply = (content) => new Response(JSON.stringify({ choices: [{ message: { content } }] }));
+
+test('falls back to Groq when every Gemini model fails', async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    calls.push(url);
+    if (url.includes('generativelanguage')) return new Response('overloaded', { status: 503 });
+    assert.equal(init.headers.authorization, 'Bearer g');
+    assert.equal(JSON.parse(init.body).response_format.type, 'json_object');
+    return groqReply('{"briefing":"Desde Groq.","stories":[{"i":0,"id":"abc","resumen":"Resumen Groq."}]}');
+  });
+  const res = await summarize(stories, { apiKey: 'k', groqKey: 'g' });
+  assert.equal(res.briefing, 'Desde Groq.');
+  assert.deepEqual(res.summaries, { abc: 'Resumen Groq.' });
+  assert.match(res.model, /^groq\//);
+  assert.equal(calls.filter((u) => u.includes('generativelanguage')).length, 2, 'tries both Gemini models first');
+});
+
+test('uses Groq alone when there is no Gemini key, and reports both failures', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (url) => (url.includes('groq') ? groqReply('{"briefing":"Solo Groq.","stories":[]}') : assert.fail('Gemini called')));
+  assert.equal((await summarize(stories, { apiKey: '', groqKey: 'g' })).briefing, 'Solo Groq.');
+  t.mock.method(globalThis, 'fetch', async () => new Response('quota', { status: 429 }));
+  await assert.rejects(summarize(stories, { apiKey: 'k', groqKey: 'g' }), /gemini .*429.*groq .*429/);
+});

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { parseFeed } from './parse.js';
 import { classify } from './classify.js';
 import { clusterArticles } from './cluster.js';
-import { summarize } from './summarize.js';
+import { summarize, hasAIKey } from './summarize.js';
 import { SECTIONS } from '../../web/lib/taxonomy.js';
 import { isSpoiler } from '../../web/lib/spoilers.js';
 
@@ -111,7 +111,7 @@ async function main() {
   const skipAI = process.env.SKIP_AI === '1';
   // Three sections at a time: GitHub bills by wall-clock minutes, and the free Gemini tier
   // allows ~15 requests/minute. Results are applied in job order (portada first).
-  const jobs = skipAI || !process.env.GEMINI_API_KEY ? [] : aiJobs(stories, now);
+  const jobs = skipAI || !hasAIKey() ? [] : aiJobs(stories, now);
   const results = await mapLimit(jobs, AI_CONCURRENCY, async (job) => {
     try {
       return await summarize(job.stories, { label: job.label, nba: job.nba });

@@ -42,6 +42,8 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODEL: ${{ vars.GROQ_MODEL }}
           PREVIOUS_DATA_URL: ${{ format('{0}/data/news.json', vars.SITE_URL || 'https://mi-diario.mizepp.workers.dev') }}
       - name: Publicar en Cloudflare Workers
         if: env.CLOUDFLARE_API_TOKEN != ''
