@@ -78,6 +78,7 @@ const goLogin = () => location.assign(`/login?next=${encodeURIComponent(location
 
 // With login enabled, the account's own sync code replaces any device link: the profile is
 // merged into the account and follows the person to every device where they log in.
+// Returns true when it already pulled, so boot does not pull twice.
 async function initAccount() {
   try {
     const res = await fetch('api/me', { cache: 'no-store' });
@@ -91,9 +92,11 @@ async function initAccount() {
   if (!code || state.profile.sync.code === code) return;
   state.profile.sync = { code, lastPull: 0, lastPush: 0 };
   saveProfile(state.profile);
-  if (await pull()) state.profile.onboarded = true;
+  const pulled = await pull();
+  if (pulled) state.profile.onboarded = true;
   persist({ sync: false });
   document.getElementById('onboarding').close?.();
+  return pulled;
 }
 
 function logout() {
@@ -561,7 +564,9 @@ function scheduleSync() {
   if (!state.profile.sync.code) return;
   pushPending = true;
   clearTimeout(pushTimer);
-  pushTimer = setTimeout(push, 15000);
+  // Pull first: it merges what other devices sent and then pushes, so a device with an old copy
+  // never overwrites the server with it.
+  pushTimer = setTimeout(pull, 15000);
 }
 
 async function push({ keepalive = false } = {}) {
@@ -651,7 +656,7 @@ document.addEventListener('visibilitychange', async () => {
     showUpdated();
     if (Date.now() - lastCheck > 60e3) checkForUpdate();
   }
-  if (document.visibilityState === 'visible' && state.profile.sync.code && Date.now() - state.profile.sync.lastPull > 120000) {
+  if (document.visibilityState === 'visible' && state.profile.sync.code && Date.now() - state.profile.sync.lastPull > 20e3) {
     if (await pull()) render();
   }
 });
@@ -699,6 +704,6 @@ if (location.hash.startsWith('#sync=')) {
   loadData().then(() => linkSync(location.hash.slice(6)));
 } else {
   Promise.all([loadData(), initAccount()])
-    .then(() => (state.account?.sync ? true : pull()))
+    .then(([, pulled]) => pulled || pull())
     .then((changed) => changed && render());
 }
