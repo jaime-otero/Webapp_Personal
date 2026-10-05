@@ -3,37 +3,162 @@
 //   PUT /api/profile/:code   → store it (JSON, max 256 KB)
 // The code is a random 128-bit id generated in the browser; whoever knows it can read and
 // write that profile, nothing else. Profiles hold reading preferences, no personal data.
+//
+// Optional login: with the INVITES secret set ("ana:código, pepe:otro…", one per person) the
+// whole site asks for an invite code. Each person gets a cookie bound to their code (changing
+// or removing it logs them out) and an account sync code derived from it (GET /api/me), so
+// their profile follows them to any device where they log in. Without INVITES the site is open.
 
 const CODE_RE = /^[a-f0-9]{32}$/;
 const MAX_BYTES = 256 * 1024;
+const COOKIE = 'md_session';
+const COOKIE_MAX_AGE = 400 * 86400; // the longest browsers keep a cookie
+const PUBLIC = /^\/(sw\.js|manifest\.webmanifest|icons\/.*)$/; // reachable without logging in
 
-const json = (body, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+const json = (body, status = 200, headers = {}) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers } });
+
+// ---------- login ----------
+
+export function parseInvites(raw) {
+  const out = new Map();
+  for (const entry of String(raw ?? '').split(/[\n,]/)) {
+    const i = entry.indexOf(':');
+    const name = entry.slice(0, i).trim();
+    const code = entry.slice(i + 1).trim();
+    if (i > 0 && name && code) out.set(name, code);
+  }
+  return out;
+}
+
+async function hmac(key, message) {
+  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(message)));
+  return [...sig].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const sessionToken = async (name, code) => `${encodeURIComponent(name)}.${await hmac(code, `session:${name}`)}`;
+const accountSync = async (name, code) => (await hmac(code, `sync:${name}`)).slice(0, 32);
+
+function readCookie(request) {
+  const m = (request.headers.get('cookie') ?? '').match(new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`));
+  return m ? m[1] : null;
+}
+
+// The logged-in person, or null. The token is re-checked against the current invites.
+async function currentUser(request, invites) {
+  const token = readCookie(request);
+  if (!token) return null;
+  let name;
+  try {
+    name = decodeURIComponent(token.slice(0, token.indexOf('.')));
+  } catch {
+    return null;
+  }
+  const code = invites.get(name);
+  if (!code || token !== (await sessionToken(name, code))) return null;
+  return { name, code };
+}
+
+const safeNext = (next) => (typeof next === 'string' && next.startsWith('/') && !next.startsWith('//') ? next : '/');
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+function loginPage(next, error = '') {
+  const html = `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mi Diario · Entrar</title>
+<link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<style>
+  :root { --bg: #fbfaf7; --surface: #fff; --text: #1b1c1f; --muted: #6a6d74; --border: #e6e3dc; --accent: #b4381e; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #16171a; --surface: #1f2024; --text: #ececec; --muted: #9a9ca3; --border: #2f3036; --accent: #ff8a65; } }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+  form { width: min(360px, calc(100vw - 32px)); background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; box-sizing: border-box; }
+  h1 { margin: 0 0 4px; font: 700 1.6rem/1.2 'Iowan Old Style', Palatino, Georgia, serif; }
+  p { margin: 0 0 16px; color: var(--muted); }
+  input, button { width: 100%; box-sizing: border-box; font: inherit; border-radius: 8px; padding: 10px 12px; }
+  input { border: 1px solid var(--border); background: var(--bg); color: var(--text); margin-bottom: 12px; }
+  button { border: 0; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+  .error { color: var(--accent); }
+</style>
+</head>
+<body>
+<form method="post" action="/login">
+  <h1>Mi Diario</h1>
+  <p>Escribe tu código de invitación.</p>
+  ${error ? `<p class="error">${esc(error)}</p>` : ''}
+  <input type="hidden" name="next" value="${esc(next)}">
+  <input name="code" type="password" autocomplete="current-password" aria-label="Código de invitación" required autofocus>
+  <button>Entrar</button>
+</form>
+</body>
+</html>`;
+  return new Response(html, { status: error ? 401 : 200, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+}
+
+async function login(request, url, invites) {
+  if (request.method === 'GET') return loginPage(safeNext(url.searchParams.get('next')));
+  if (request.method !== 'POST') return json({ error: 'method not allowed' }, 405);
+  const form = await request.formData();
+  const next = safeNext(form.get('next'));
+  const code = String(form.get('code') ?? '').trim();
+  const name = [...invites].find(([, c]) => c === code)?.[0];
+  if (!code || !name) return loginPage(next, 'Código incorrecto.');
+  const cookie = `${COOKIE}=${await sessionToken(name, code)}; Path=/; Max-Age=${COOKIE_MAX_AGE}; HttpOnly; Secure; SameSite=Lax`;
+  return new Response(null, { status: 303, headers: { location: next, 'set-cookie': cookie } });
+}
+
+const logout = () =>
+  new Response(null, { status: 303, headers: { location: '/login', 'set-cookie': `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax` } });
+
+// ---------- profiles ----------
+
+async function profileApi(request, env, url) {
+  const m = url.pathname.match(/^\/api\/profile\/([^/]+)$/);
+  if (!m || !CODE_RE.test(m[1])) return json({ error: 'not found' }, 404);
+  const key = `profile:${m[1]}`;
+
+  if (request.method === 'GET') {
+    const stored = await env.PROFILES.get(key);
+    return stored ? new Response(stored, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }) : json({ error: 'not found' }, 404);
+  }
+  if (request.method === 'PUT') {
+    const body = await request.text();
+    if (body.length > MAX_BYTES) return json({ error: 'too large' }, 413);
+    try {
+      const parsed = JSON.parse(body);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error();
+    } catch {
+      return json({ error: 'invalid json' }, 400);
+    }
+    await env.PROFILES.put(key, body);
+    return json({ ok: true });
+  }
+  return json({ error: 'method not allowed' }, 405);
+}
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const m = url.pathname.match(/^\/api\/profile\/([^/]+)$/);
-    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
-    if (!m || !CODE_RE.test(m[1])) return json({ error: 'not found' }, 404);
-    const key = `profile:${m[1]}`;
+    const invites = parseInvites(env.INVITES);
+    let user = null;
 
-    if (request.method === 'GET') {
-      const stored = await env.PROFILES.get(key);
-      return stored ? new Response(stored, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }) : json({ error: 'not found' }, 404);
-    }
-    if (request.method === 'PUT') {
-      const body = await request.text();
-      if (body.length > MAX_BYTES) return json({ error: 'too large' }, 413);
-      try {
-        const parsed = JSON.parse(body);
-        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error();
-      } catch {
-        return json({ error: 'invalid json' }, 400);
+    if (invites.size) {
+      if (url.pathname === '/login') return login(request, url, invites);
+      if (url.pathname === '/logout') return logout();
+      user = await currentUser(request, invites);
+      if (!user && !PUBLIC.test(url.pathname)) {
+        const isPage = request.method === 'GET' && (request.headers.get('accept') ?? '').includes('text/html');
+        if (!isPage) return json({ error: 'login required' }, 401);
+        return new Response(null, { status: 302, headers: { location: `/login?next=${encodeURIComponent(url.pathname + url.search)}` } });
       }
-      await env.PROFILES.put(key, body);
-      return json({ ok: true });
     }
-    return json({ error: 'method not allowed' }, 405);
+
+    if (url.pathname === '/api/me') return json(user ? { name: user.name, sync: await accountSync(user.name, user.code) } : { name: null });
+    if (url.pathname.startsWith('/api/')) return profileApi(request, env, url);
+    return env.ASSETS.fetch(request);
   },
 };

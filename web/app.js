@@ -5,7 +5,7 @@ import { isSpoiler } from './lib/spoilers.js';
 
 const PAGE = 30;
 const SESSION = Date.now();
-const state = { data: null, profile: pruneProfile(loadProfile()), route: { view: 'foryou' }, limit: PAGE, revealed: new Set() };
+const state = { data: null, profile: pruneProfile(loadProfile()), account: null, route: { view: 'foryou' }, limit: PAGE, revealed: new Set() };
 const $main = document.getElementById('main');
 const $tabs = document.getElementById('tabs');
 const $subtabs = document.getElementById('subtabs');
@@ -62,6 +62,7 @@ window.addEventListener('hashchange', () => {
 async function loadData() {
   try {
     const res = await fetch('data/news.json', { cache: 'no-cache' });
+    if (res.status === 401) return goLogin();
     if (!res.ok) throw new Error(res.status);
     state.data = await res.json();
   } catch {
@@ -71,6 +72,36 @@ async function loadData() {
   showUpdated();
   render();
   if (!state.profile.onboarded && !location.hash.startsWith('#sync=')) openOnboarding();
+}
+
+const goLogin = () => location.assign(`/login?next=${encodeURIComponent(location.pathname)}`);
+
+// With login enabled, the account's own sync code replaces any device link: the profile is
+// merged into the account and follows the person to every device where they log in.
+async function initAccount() {
+  try {
+    const res = await fetch('api/me', { cache: 'no-store' });
+    if (res.status === 401) return goLogin();
+    if (!res.ok) return;
+    state.account = await res.json();
+  } catch {
+    return;
+  }
+  const code = state.account?.sync;
+  if (!code || state.profile.sync.code === code) return;
+  state.profile.sync = { code, lastPull: 0, lastPush: 0 };
+  saveProfile(state.profile);
+  if (await pull()) state.profile.onboarded = true;
+  persist({ sync: false });
+  document.getElementById('onboarding').close?.();
+}
+
+function logout() {
+  if (!confirm('¿Cerrar sesión? Tus gustos siguen guardados en tu cuenta.')) return;
+  try {
+    localStorage.clear();
+  } catch {}
+  location.assign('/logout');
 }
 
 function showUpdated() {
@@ -278,7 +309,10 @@ function settingsHtml() {
     list.map(([k]) => `<button class="feat" data-forget="${esc(k)}" title="Olvidar">${esc(featureLabel(k, names))} ✕</button>`).join('') || '<span class="muted small">Nada todavía.</span>';
   const counts = `${listOf(p.liked).length} me gusta · ${listOf(p.saved).length} guardadas · ${Object.keys(p.disliked).length} “no me interesa” · ${p.model.n} señales aprendidas`;
 
-  const sync = p.sync.code
+  const sync = state.account?.name
+    ? `<p>Has entrado como <strong>${esc(state.account.name)}</strong>. Tus gustos se guardan en tu cuenta: entra con tu código en cualquier dispositivo y los tendrás allí.</p>
+       <div class="actions"><button data-act="sync-now">Sincronizar ahora</button><button data-act="logout">Cerrar sesión</button></div>`
+    : p.sync.code
     ? `<p>Sincronización activada. Abre este enlace en tu otro dispositivo (móvil, PC…) para unirlo:</p>
        <input class="code" readonly value="${esc(syncLink())}" aria-label="Enlace de sincronización">
        <div class="actions"><button data-act="sync-copy">Copiar enlace</button>${navigator.share ? '<button data-act="sync-share">Compartir</button>' : ''}<button data-act="sync-now">Sincronizar ahora</button><button data-act="sync-off">Desactivar en este dispositivo</button></div>
@@ -297,7 +331,7 @@ function settingsHtml() {
     <p class="small"><strong>Te interesa:</strong></p><div class="feats">${featChips(pos)}</div>
     <p class="small"><strong>Te interesa poco:</strong></p><div class="feats">${featChips(neg)}</div>
     <div class="actions"><button data-act="reset-learning">Borrar todo lo aprendido</button></div>
-    <h2>Sincronizar dispositivos</h2>${sync}
+    <h2>${state.account?.name ? 'Tu cuenta' : 'Sincronizar dispositivos'}</h2>${sync}
     <h2>Idiomas</h2>
     <label class="row"><span>Español</span><input type="checkbox" data-lang="es"${p.langs.includes('es') ? ' checked' : ''}></label>
     <label class="row"><span>Inglés</span><input type="checkbox" data-lang="en"${p.langs.includes('en') ? ' checked' : ''}></label>
@@ -378,6 +412,7 @@ $main.addEventListener('click', (e) => {
   }
   if (act === 'export') return exportProfile();
   if (act === 'onboarding') return openOnboarding();
+  if (act === 'logout') return logout();
   if (act === 'reset-learning') {
     if (confirm('¿Borrar todo lo aprendido? Se mantienen tus secciones, medios y noticias guardadas.')) {
       p.model = emptyModel();
@@ -663,6 +698,7 @@ state.route = parseRoute();
 if (location.hash.startsWith('#sync=')) {
   loadData().then(() => linkSync(location.hash.slice(6)));
 } else {
-  loadData();
-  pull().then((changed) => changed && render());
+  Promise.all([loadData(), initAccount()])
+    .then(() => (state.account?.sync ? true : pull()))
+    .then((changed) => changed && render());
 }

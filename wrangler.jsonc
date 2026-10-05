@@ -7,7 +7,7 @@
     "directory": "./web",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": true
   },
   "kv_namespaces": [{ "binding": "PROFILES", "id": "84922554d2ce4fd8abd94c851851ede9" }]
 }

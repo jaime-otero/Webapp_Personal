@@ -56,13 +56,17 @@ npm test
 
 ### Solo para quien invites (inicio de sesión)
 
-Con Cloudflare Access (gratis hasta 50 personas) la web pide iniciar sesión con un código que llega al correo; solo entran los correos de la lista. No hace falta tocar el código.
+La web puede pedir un **código de invitación**: cada persona tiene el suyo, lo escribe una vez y queda dentro (la sesión dura más de un año en ese dispositivo). Cada código es una cuenta: sus gustos se guardan en la nube y le siguen a cualquier dispositivo donde entre.
 
-1. En Cloudflare, *Workers & Pages → mi-diario → Settings → Domains & Routes*, en la fila de `workers.dev` pulsa **Enable Cloudflare Access** (la primera vez te pide crear un equipo de *Zero Trust* con el plan **Free**).
-2. Pulsa **Manage Cloudflare Access** y edita la política: *Action* **Allow**, regla **Emails** con los correos de quienes pueden entrar (el tuyo incluido). Para invitar a alguien más, añade su correo aquí.
-3. En *Zero Trust → Access → Applications →* la de `mi-diario` → *Session duration*, pon **1 month** para no tener que entrar a cada rato.
+1. En Cloudflare, *Workers & Pages → mi-diario → Settings → Variables and Secrets → Add*, tipo **Secret**, nombre `INVITES` y como valor un `nombre:código` por persona, separados por comas:
+   ```
+   jaime:sol-mesa-rio-47, ana:luna-pan-verde-12, pepe:tren-azul-casa-83
+   ```
+   Usa códigos largos e inventados (3-4 palabras y un número). El secreto no está en el repo, así que puede ser público.
+2. Pásale a cada amigo la URL de la web y **su** código.
+3. Para invitar a alguien, añade su `nombre:código`; para quitarle el acceso, borra su entrada (o cámbiale el código).
 
-El workflow sigue funcionando igual: guarda la edición anterior en la caché de Actions en vez de descargarla de la web.
+Sin `INVITES` la web está abierta a cualquiera, como antes. El workflow sigue funcionando igual: guarda la edición anterior en la caché de Actions en vez de descargarla de la web.
 
 ## Hazte tu propia copia
 
@@ -91,4 +95,4 @@ Las noticias de la NBA con marcadores, "X gana a Y", estadísticas de partido o 
 
 ## Sincronizar móvil y PC
 
-Ajustes → *Sincronizar dispositivos* → *Activar* y abre el enlace en el otro dispositivo. El perfil se guarda en Cloudflare KV (gratis) bajo un código aleatorio de 128 bits; se sube como mucho cada 15 s y se descarga al abrir la web. El perfil también se puede exportar/importar como archivo.
+Con inicio de sesión no hace falta nada: entra con tu código en cada dispositivo. Sin él: Ajustes → *Sincronizar dispositivos* → *Activar* y abre el enlace en el otro dispositivo. El perfil se guarda en Cloudflare KV (gratis) bajo un código aleatorio de 128 bits; se sube como mucho cada 15 s y se descarga al abrir la web. El perfil también se puede exportar/importar como archivo.
