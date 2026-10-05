@@ -7,7 +7,7 @@ Agregador de noticias personal y gratuito: recoge noticias de ~40 medios fiables
 ## Cómo funciona
 
 ```
-GitHub Actions (cada hora de 7 a 24 h, dos veces de madrugada; IA cada 2 h)
+GitHub Actions (cada 30 min de 7 a 1 h, dos veces de madrugada; IA cada 2 h)
   └─ npm run ingest
        1. descarga los RSS de sources.json
        2. limpia, deduplica y clasifica en secciones/subsecciones
@@ -53,7 +53,7 @@ npm test
    - Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `GEMINI_API_KEY` y, como IA de reserva, `GROQ_API_KEY` (gratis en [console.groq.com/keys](https://console.groq.com/keys)): si Gemini falla, los resúmenes se hacen con Groq
    - Variables (opcionales): `SITE_URL` (la URL final, p. ej. `https://mi-diario.<tu-subdominio>.workers.dev`, para reaprovechar resúmenes si falla la IA) `GEMINI_MODEL` (por defecto los alias `gemini-flash-latest` → `gemini-flash-lite-latest`) `GROQ_MODEL` (por defecto `openai/gpt-oss-120b` → `llama-3.3-70b-versatile`) y `GITHUB_MODELS_MODEL` (por defecto `openai/gpt-4.1-mini` → `openai/gpt-4o-mini`).
    - **GitHub Models** es la última reserva y no necesita clave: el workflow usa su propio `GITHUB_TOKEN` (permiso `models: read`). Para probarla, *Run workflow* con la IA `github`.
-4. El workflow *Actualizar noticias* se ejecuta en la rama por defecto del repo cada hora de 7:00 a 24:00 (hora de España) y dos veces de madrugada, en cada push y a mano desde *Actions → Actualizar noticias → Run workflow*. Los resúmenes IA se regeneran cada 2 h; en las horas intermedias entran noticias nuevas y se conservan los resúmenes anteriores. Con la web abierta, cada 10 min comprueba `data/meta.json` y, si hay edición nueva, muestra el botón "Hay noticias nuevas · Actualizar".
+4. El workflow *Actualizar noticias* se ejecuta en la rama por defecto del repo cada 30 min de 7:00 a 1:00 (hora de España, en verano) y dos veces de madrugada, en cada push y a mano desde *Actions → Actualizar noticias → Run workflow*. Los resúmenes IA se regeneran cada 2 h; en las ejecuciones intermedias entran noticias nuevas y se conservan los resúmenes anteriores. Con la web abierta, cada 10 min comprueba `data/meta.json` y, si hay edición nueva, muestra el botón "Hay noticias nuevas · Actualizar".
 5. Abre la web en el móvil → menú del navegador → **"Añadir a pantalla de inicio" / "Instalar app"**.
 
 ### Solo para quien invites (inicio de sesión)

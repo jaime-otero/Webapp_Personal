@@ -2,9 +2,13 @@ name: Actualizar noticias
 
 on:
   schedule:
-    # Horas en UTC. Cada hora de 5 a 22 UTC (7:17–0:17 en España en verano, 6:17–23:17 en invierno)
-    # y dos veces de madrugada. Minuto 17 para evitar la congestión de las :00.
-    - cron: '17 5-22 * * *'
+    # Horas en UTC. Cada 30 min de 5:17 a 22:47 UTC (7:17–0:47 en España en verano, 6:17–23:47 en
+    # invierno) y dos veces de madrugada. Minutos 17 y 47 para evitar la congestión de las :00 y :30.
+    # La primera línea es la única con resúmenes IA (cada 2 h): si se cambia, cambiar también
+    # AI_CRON más abajo.
+    - cron: '17 6-22/2 * * *'
+    - cron: '17 5-21/2 * * *'
+    - cron: '47 5-22 * * *'
     - cron: '17 1,3 * * *'
   workflow_dispatch:
     inputs:
@@ -48,11 +52,15 @@ jobs:
           path: web/data/news.json
           key: news-${{ github.run_id }}
           restore-keys: news-
-      # Los resúmenes IA se regeneran cada 2 h (horas UTC pares); en las horas impares solo entran
-      # noticias nuevas y se conservan los resúmenes de la edición anterior.
+      # Los resúmenes IA se regeneran cada 2 h (cron AI_CRON); en las demás ejecuciones programadas
+      # solo entran noticias nuevas y se conservan los resúmenes de la edición anterior. Se mira qué
+      # cron lanzó la ejecución, no la hora, porque GitHub a veces las retrasa.
       - name: ¿Toca resumen IA?
+        env:
+          AI_CRON: '17 6-22/2 * * *'
+          SCHEDULE: ${{ github.event.schedule }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ] && [ $(( 10#$(date -u +%H) % 2 )) -eq 1 ]; then
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$SCHEDULE" != "$AI_CRON" ]; then
             echo "SKIP_AI=1" >> "$GITHUB_ENV"
           fi
       - name: Descargar feeds y generar resúmenes
