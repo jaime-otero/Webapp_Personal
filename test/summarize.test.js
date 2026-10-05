@@ -5,7 +5,7 @@ import { summarize } from '../scripts/ingest/summarize.js';
 const stories = [{ id: 'abc', topics: ['fisica'], summary: 'x', sources: [{ source: 'CERN', title: 'New boson' }] }];
 
 test('summarize is skipped without an API key', async () => {
-  assert.equal(await summarize(stories, { apiKey: '' }), null);
+  assert.equal(await summarize(stories, { apiKey: '', groqKey: '', githubToken: '' }), null);
 });
 
 test('summarize parses the Gemini JSON response', async (t) => {
@@ -52,7 +52,7 @@ test('uses Groq alone when there is no Gemini key, and reports both failures', a
   t.mock.method(globalThis, 'fetch', async (url) => (url.includes('groq') ? groqReply('{"briefing":"Solo Groq.","stories":[]}') : assert.fail('Gemini called')));
   assert.equal((await summarize(stories, { apiKey: '', groqKey: 'g' })).briefing, 'Solo Groq.');
   t.mock.method(globalThis, 'fetch', async () => new Response('quota', { status: 429 }));
-  await assert.rejects(summarize(stories, { apiKey: 'k', groqKey: 'g' }), /gemini .*429.*groq .*429/);
+  await assert.rejects(summarize(stories, { apiKey: 'k', groqKey: 'g', githubToken: '' }), /gemini .*429.*groq .*429/);
 });
 
 test('waits and retries when the provider asks to (429 + retry-after)', async (t) => {
@@ -65,4 +65,22 @@ test('waits and retries when the provider asks to (429 + retry-after)', async (t
   const res = await summarize(stories, { apiKey: '', groqKey: 'g' });
   assert.equal(res.briefing, 'Tras esperar.');
   assert.equal(n, 2);
+});
+
+test('falls back to GitHub Models when Gemini and Groq fail', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (!url.includes('models.github.ai')) return new Response('quota', { status: 429 });
+    assert.equal(init.headers.authorization, 'Bearer gh');
+    assert.equal(JSON.parse(init.body).model, 'openai/gpt-4.1-mini');
+    return groqReply('{"briefing":"Desde GitHub.","stories":[{"i":0,"id":"abc","resumen":"Resumen GitHub."}]}');
+  });
+  const res = await summarize(stories, { apiKey: 'k', groqKey: 'g', githubToken: 'gh' });
+  assert.equal(res.briefing, 'Desde GitHub.');
+  assert.deepEqual(res.summaries, { abc: 'Resumen GitHub.' });
+  assert.equal(res.model, 'github/openai/gpt-4.1-mini');
+});
+
+test('uses GitHub Models alone when it is the only provider', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (url) => (url.includes('models.github.ai') ? groqReply('{"briefing":"Solo GitHub.","stories":[]}') : assert.fail(`called ${url}`)));
+  assert.equal((await summarize(stories, { apiKey: '', groqKey: '', githubToken: 'gh' })).briefing, 'Solo GitHub.');
 });
