@@ -54,6 +54,14 @@ npm test
 4. El workflow *Actualizar noticias* se ejecuta en la rama por defecto del repo cada hora de 7:00 a 24:00 (hora de España) y dos veces de madrugada, en cada push y a mano desde *Actions → Actualizar noticias → Run workflow*. Los resúmenes IA se regeneran cada 2 h; en las horas intermedias entran noticias nuevas y se conservan los resúmenes anteriores. Con la web abierta, cada 10 min comprueba `data/meta.json` y, si hay edición nueva, muestra el botón "Hay noticias nuevas · Actualizar".
 5. Abre la web en el móvil → menú del navegador → **"Añadir a pantalla de inicio" / "Instalar app"**.
 
+## Hazte tu propia copia
+
+1. En la página del repo pulsa **Use this template → Create a new repository** (o *Fork*). Puede ser privado o público.
+2. **Base de datos de sincronización (KV):** el `id` de `wrangler.jsonc` es el de mi cuenta y en la tuya no existe. En Cloudflare ve a *Storage & Databases → KV → Create* (nombre, p. ej., `mi-diario-profiles`), copia su **ID** y sustitúyelo en `wrangler.jsonc` (se puede editar desde la web de GitHub con el lápiz ✏️).
+3. Sigue los pasos de [Ponerla en internet](#ponerla-en-internet-gratis): tus propios secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `GEMINI_API_KEY` (y `GROQ_API_KEY` si quieres) y la variable `SITE_URL` con tu URL (`https://mi-diario.<tu-subdominio>.workers.dev`).
+4. En la pestaña **Actions** de tu repo, activa los workflows si GitHub lo pide y lanza *Actualizar noticias → Run workflow*. En los forks GitHub desactiva las ejecuciones programadas hasta que las activas a mano.
+5. Para personalizarla: añade o quita medios en `sources.json` y ajusta secciones y palabras clave en `web/lib/taxonomy.js`.
+
 ## Secciones
 
 Para ti · España (Política, Economía, Sociedad, Deportes, Cultura) · EE. UU. (Política, Economía, Sociedad, NBA) · Internacional (Europa, Latinoamérica, Oriente Medio, Asia y otros) · Ciencia (Física, Espacio, Vida y salud, Clima) · Tecnología (IA, Empresas y gadgets, Innovación) · Economía (Mercados, Empresas, Energía).
