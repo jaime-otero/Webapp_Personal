@@ -59,6 +59,7 @@ test('with INVITES: login, cookie session, account sync code and revocation', as
 
   const form = (code, next = '/s/ciencia') => ({ method: 'POST', body: new URLSearchParams({ code, next }) });
   assert.equal((await worker.fetch(req('/login', form('mala')), e)).status, 401);
+  assert.equal((await worker.fetch(req('/login', form(' Clave-Ana ')), e)).status, 303);
   const ok = await worker.fetch(req('/login', form('clave-ana', '//evil.com')), e);
   assert.equal(ok.status, 303);
   assert.equal(ok.headers.get('location'), '/');
