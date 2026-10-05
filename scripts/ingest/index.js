@@ -150,6 +150,8 @@ async function main() {
   console.log(`✓ ${articles.length} artículos → ${stories.length} noticias de ${status.length - failed.length}/${status.length} fuentes`);
   console.log(`  por sección: ${SECTIONS.map((s) => `${s.id} ${count(s.id)}`).join(', ')}, nba ${count('eeuu/nba')} (spoilers ${stories.filter((s) => s.spoiler).length})`);
   console.log(`  multi-fuente: ${stories.filter((s) => s.sources.length > 1).length}, con resumen IA: ${stories.filter((s) => s.aiSummary).length}, briefings nuevos: ${skipAI ? '0 (IA omitida)' : fresh}/${Object.keys(briefings).length}`);
+  const models = [...new Set(Object.values(briefings).filter((b) => b.at === output.generatedAt).map((b) => b.model))];
+  if (models.length) console.log(`  modelos IA: ${models.join(', ')}`);
   for (const f of failed) console.log(`  ✗ ${f.id}: ${f.error}`);
   if (failed.length === status.length) process.exit(1);
 }
