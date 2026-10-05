@@ -78,6 +78,16 @@ test('classify: Deportes by sport, from sports feeds and regional sports news', 
   assert.ok(!cls('Sumar presentará su Frente Amplio y anunciará el candidato electoral el 17 de octubre', ['espana']).some((s) => s.startsWith('deportes')));
 });
 
+test('classify: NFL and college sports land in EE. UU. and in Deportes', () => {
+  const nfl = cls('Mahomes lanza tres touchdowns y los Chiefs siguen invictos', ['espana/deportes']);
+  assert.ok(nfl.includes('eeuu/nfl') && nfl.includes('deportes/nfl'));
+  assert.deepEqual(cls('Bengals vs. Dolphins odds: Opening lines for Week 5 matchup', ['eeuu/nfl']).sort(), ['deportes/nfl', 'eeuu/nfl']);
+  const college = cls('Heisman watch: the college football quarterbacks to follow', ['deportes']);
+  assert.ok(college.includes('eeuu/universitario') && !college.includes('eeuu/nfl') && college.includes('deportes/nfl'));
+  assert.ok(cls('Latest on NCAA eligibility chaos: LSU roster count', ['eeuu/universitario']).includes('eeuu/universitario'));
+  assert.ok(!cls('Joint Chiefs chairman testifies before the Senate', ['internacional']).includes('eeuu/nfl'));
+});
+
 test('clusterArticles groups the same story across outlets and keeps every section', () => {
   const mk = (id, source, title, sections) => ({ id, url: `https://x/${id}`, source, sourceId: source, title, summary: '', lang: 'es', publishedAt: '2026-10-04T10:00:00Z', image: null, sections });
   const stories = clusterArticles([

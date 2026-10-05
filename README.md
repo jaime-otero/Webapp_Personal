@@ -78,7 +78,7 @@ Sin `INVITES` la web está abierta a cualquiera, como antes. El workflow sigue f
 
 ## Secciones
 
-Para ti · España (Política, Economía, Sociedad, Deportes, Cultura) · EE. UU. (Política, Economía, Sociedad, NBA) · Internacional (Europa, Latinoamérica, Oriente Medio, Asia y otros) · Ciencia (Física, Espacio, Vida y salud, Clima) · Tecnología (IA, Empresas y gadgets, Innovación) · Economía (Mercados, Empresas, Energía) · Deportes (Fútbol, Baloncesto, Tenis, Fútbol americano, Rugby, Béisbol, Deportes de invierno, Atletismo, Ciclismo, Resistencia, Motor, Combate, Deportes acuáticos, Otros).
+Para ti · España (Política, Economía, Sociedad, Deportes, Cultura) · EE. UU. (Política, Economía, Sociedad, NBA, NFL, Deporte universitario) · Internacional (Europa, Latinoamérica, Oriente Medio, Asia y otros) · Ciencia (Física, Espacio, Vida y salud, Clima) · Tecnología (IA, Empresas y gadgets, Innovación) · Economía (Mercados, Empresas, Energía) · Deportes (Fútbol, Baloncesto, Tenis, Fútbol americano, Rugby, Béisbol, Deportes de invierno, Atletismo, Ciclismo, Resistencia, Motor, Combate, Deportes acuáticos, Otros).
 
 Cada sección tiene su resumen IA arriba (y la NBA uno propio, sin resultados). Las rutas se pueden enlazar: `#/s/eeuu/nba`.
 

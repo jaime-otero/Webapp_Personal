@@ -49,11 +49,15 @@ export function classify(article) {
   const hintRegions = hints.map((h) => h.split('/')[0]).filter((s) => s in REGION_SUBS || s === 'internacional');
   const fixedRegion = hints.find((h) => h.includes('/') && (h.startsWith('espana/') || h.startsWith('eeuu/') || h.startsWith('internacional/')));
   const isNba = hints.includes('eeuu/nba') || has('nba');
+  const isNcaa = hints.includes('eeuu/universitario') || has('dep-ncaa');
+  // "College football" also matches the NFL group: college games stay in Deporte universitario.
+  const isNfl = hints.includes('eeuu/nfl') || (has('dep-nfl') && !isNcaa);
+  const usSport = isNba || isNfl || isNcaa;
   const generalFeed = hintRegions.length > 0 && !fixedRegion;
 
   // --- region ---
   let region = null; // 'espana' | 'eeuu' | 'internacional' | subregion id
-  if (isNba) region = 'eeuu';
+  if (usSport) region = 'eeuu';
   else if (fixedRegion) region = fixedRegion.startsWith('internacional/') ? fixedRegion.split('/')[1] : fixedRegion.split('/')[0];
   else if (generalFeed) {
     const hint = hintRegions[0] === 'internacional' ? null : hintRegions[0];
@@ -67,6 +71,8 @@ export function classify(article) {
       if (hints.includes(`${region}/${sub}`) || has(group, subMin)) sections.add(`${region}/${sub}`);
     }
     if (isNba) sections.add('eeuu/nba');
+    if (isNfl) sections.add('eeuu/nfl');
+    if (isNcaa) sections.add('eeuu/universitario');
     if (![...sections].some((s) => s.startsWith(`${region}/`))) sections.add(region);
   } else if (region === 'internacional') sections.add('internacional');
   else if (region) sections.add(REGION_SECTION[region]);
@@ -94,9 +100,10 @@ export function classify(article) {
     if (has('r:eeuu')) sections.add('eeuu/economia');
   }
   // Sports news from a region (Marca, an NBA feed…) also belongs to Deportes.
-  if (sections.has('espana/deportes') || sections.has('eeuu/nba')) {
+  if (sections.has('espana/deportes') || usSport) {
     for (const [sub, group] of Object.entries(TOPICAL.deportes.subs)) if (has(group)) sections.add(`deportes/${sub}`);
     if (isNba) sections.add('deportes/baloncesto');
+    if (isNfl) sections.add('deportes/nfl');
     if (![...sections].some((s) => s.startsWith('deportes/'))) sections.add('deportes');
   }
   // A subsection already implies its parent section.
