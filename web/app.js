@@ -1,4 +1,4 @@
-import { loadProfile, saveProfile, pruneProfile, defaultProfile, migrate, isOn, listOf, setFlag, toRemote, mergeProfiles } from './lib/profile.js';
+import { loadProfile, saveProfile, pruneProfile, defaultProfile, migrate, isOn, listOf, setFlag, toRemote, mergeProfiles, orderedSections, moveSection } from './lib/profile.js';
 import { rankStories, sortEntries, SORTS, train, topFeatures, featureLabel, sectionPref, emptyModel } from './lib/rank.js';
 import { SECTIONS, SECTION_BY_ID, sectionLabel } from './lib/taxonomy.js';
 import { isSpoiler } from './lib/spoilers.js';
@@ -165,7 +165,7 @@ const href = (route) => (route.view === 'section' ? `#/s/${route.sec}${route.sub
 function tabsHtml() {
   const r = state.route;
   const tabs = [[{ view: 'foryou' }, 'Para ti']];
-  for (const s of SECTIONS) if (sectionPref(state.profile, s.id) > -2) tabs.push([{ view: 'section', sec: s.id }, s.label]);
+  for (const s of orderedSections(state.profile)) if (sectionPref(state.profile, s.id) > -2) tabs.push([{ view: 'section', sec: s.id }, s.label]);
   tabs.push([{ view: 'megusta' }, '❤️ Me gusta'], [{ view: 'guardados' }, 'Guardados'], [{ view: 'ajustes' }, 'Ajustes']);
   return tabs
     .map(([route, label]) => {
@@ -178,7 +178,7 @@ function tabsHtml() {
 function subtabsHtml() {
   const r = state.route;
   if (r.view !== 'section') return '';
-  const sec = SECTION_BY_ID[r.sec];
+  const sec = orderedSections(state.profile).find((s) => s.id === r.sec);
   const subs = sec.subs.filter((s) => sectionPref(state.profile, s.key) > -2);
   return [{ id: null, label: 'Todo' }, ...subs]
     .map((s) => `<a class="subtab${r.sub === s.id ? ' active' : ''}" href="${href({ view: 'section', sec: r.sec, sub: s.id })}">${esc(s.label)}</a>`)
@@ -306,10 +306,15 @@ function settingsHtml() {
     const current = own ?? (isSub ? '' : 1);
     return `<select data-section="${key}">${opts.map(([v, l]) => `<option value="${v}"${String(current) === String(v) ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
   };
-  const sectionRows = SECTIONS.map(
-    (s) => `<div class="group"><label class="row"><strong>${s.label}</strong>${select(s.id, false)}</label>
-      ${s.subs.map((sub) => `<label class="row sub"><span>${sub.label}</span>${select(sub.key, true)}</label>`).join('')}</div>`,
-  ).join('');
+  const move = (key, label, i, n) =>
+    `<span class="move"><button data-move="${key}" data-dir="-1" title="Subir ${esc(label)}" aria-label="Subir ${esc(label)}"${i === 0 ? ' disabled' : ''}>↑</button><button data-move="${key}" data-dir="1" title="Bajar ${esc(label)}" aria-label="Bajar ${esc(label)}"${i === n - 1 ? ' disabled' : ''}>↓</button></span>`;
+  const sections = orderedSections(p);
+  const sectionRows = sections
+    .map(
+      (s, i) => `<div class="group"><div class="row">${move(s.id, s.label, i, sections.length)}<label><strong>${s.label}</strong>${select(s.id, false)}</label></div>
+      ${s.subs.map((sub, j) => `<div class="row sub">${move(sub.key, sub.label, j, s.subs.length)}<label><span>${sub.label}</span>${select(sub.key, true)}</label></div>`).join('')}</div>`,
+    )
+    .join('');
 
   const byName = new Map();
   for (const s of state.data.sources) byName.set(s.name, [...(byName.get(s.name) ?? []), s]);
@@ -341,8 +346,9 @@ function settingsHtml() {
        <div class="actions"><button data-act="sync-on">Activar sincronización</button></div>`;
 
   return `<section class="settings">
-    <h2>Secciones</h2><p class="muted small">Cuánto te interesa cada sección. Las subsecciones heredan el valor de su sección salvo que elijas otro. “Ocultar” la quita de la navegación.</p>
+    <h2>Secciones</h2><p class="muted small">Cuánto te interesa cada sección. Las subsecciones heredan el valor de su sección salvo que elijas otro. “Ocultar” la quita de la navegación. Con ↑ ↓ cambias el orden de las pestañas y subsecciones.</p>
     ${sectionRows}
+    ${Object.keys(p.order ?? {}).length ? '<div class="actions"><button data-act="reset-order">Restablecer el orden</button></div>' : ''}
     <h2>Sin spoilers</h2>
     <label class="row"><span>Tapar resultados de la NBA (marcadores, quién gana…)</span><input type="checkbox" data-spoilers${p.spoilers.nba ? ' checked' : ''}></label>
     <label class="stack"><span>Otras palabras a tapar en la NBA (una por línea)</span><textarea data-spoiler-words rows="2" placeholder="playoffs">${esc(p.spoilers.extra.join('\n'))}</textarea></label>
@@ -424,6 +430,15 @@ $main.addEventListener('click', (e) => {
     state.limit = PAGE;
     return render();
   }
+  const mover = e.target.closest('[data-move]');
+  if (mover) {
+    if (!moveSection(state.profile, mover.dataset.move, Number(mover.dataset.dir))) return;
+    persist({ prefs: true });
+    render();
+    // Keep the focus on the moved row's button so it can be pressed again.
+    document.querySelector(`[data-move="${mover.dataset.move}"][data-dir="${mover.dataset.dir}"]:not(:disabled)`)?.focus({ preventScroll: true });
+    return;
+  }
   const forget = e.target.closest('[data-forget]');
   if (forget) {
     delete state.profile.model.w[forget.dataset.forget];
@@ -450,6 +465,11 @@ $main.addEventListener('click', (e) => {
       render();
     }
     return;
+  }
+  if (act === 'reset-order') {
+    p.order = {};
+    persist({ prefs: true });
+    return render();
   }
   if (act.startsWith('sync-')) return syncAction(act);
 
@@ -696,7 +716,7 @@ function openOnboarding() {
   dlg.innerHTML = `<form method="dialog" class="onboarding">
     <h2>Bienvenido a Mi Diario</h2>
     <p>Marca lo que más te interesa. Después, cada ❤️ que des enseñará a la web tus gustos.</p>
-    ${SECTIONS.map((s) => `<fieldset><legend>${s.label}</legend><div class="chips">${pick(s.id, `Todo ${s.label}`)}${s.subs.map((sub) => pick(sub.key, sub.label)).join('')}</div></fieldset>`).join('')}
+    ${orderedSections(p).map((s) => `<fieldset><legend>${s.label}</legend><div class="chips">${pick(s.id, `Todo ${s.label}`)}${s.subs.map((sub) => pick(sub.key, sub.label)).join('')}</div></fieldset>`).join('')}
     <fieldset><legend>Idiomas</legend><div class="chips">
       <label class="pick"><input type="checkbox" name="lang" value="es"${p.langs.includes('es') ? ' checked' : ''}><span>Español</span></label>
       <label class="pick"><input type="checkbox" name="lang" value="en"${p.langs.includes('en') ? ' checked' : ''}><span>Inglés</span></label>

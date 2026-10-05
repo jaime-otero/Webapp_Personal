@@ -2,6 +2,7 @@
 // preferences, the learned model, and what the user did with each story.
 
 import { emptyModel } from './rank.js';
+import { SECTIONS } from './taxonomy.js';
 
 const KEY = 'midiario.profile.v1';
 const MAX_SNAPSHOTS = 300;
@@ -15,6 +16,7 @@ export function defaultProfile(now = Date.now()) {
     langs: ['es', 'en'],
     sections: {}, // "espana" | "eeuu/nba" → -2 (ocultar) … 3 (me encanta); missing = 1
     sources: {}, // sourceId → -1 (silenciado) | 0 | 1 (favorito)
+    order: {}, // '' → section ids in tab order; section id → its subsection ids (missing = default order)
     boostKeywords: [],
     muteKeywords: [],
     spoilers: { nba: true, extra: [] },
@@ -110,6 +112,34 @@ export function pruneProfile(profile, now = Date.now()) {
   return profile;
 }
 
+// ---------- section order ----------
+
+// Ids in the person's order; ids they never placed (e.g. a new section) keep their default spot at the end.
+function arrange(items, order = []) {
+  const rank = new Map(order.map((id, i) => [id, i]));
+  return items.map((it, i) => [it, rank.get(it.id) ?? order.length + i]).sort((a, b) => a[1] - b[1]).map(([it]) => it);
+}
+
+// SECTIONS (and each one's subs) in the order the person chose.
+export function orderedSections(profile) {
+  const order = profile.order ?? {};
+  return arrange(SECTIONS, order['']).map((s) => ({ ...s, subs: arrange(s.subs, order[s.id]) }));
+}
+
+// Move a section ("ciencia") or subsection ("ciencia/fisica") one place up (-1) or down (+1).
+export function moveSection(profile, key, dir) {
+  const [sec, sub] = key.split('/');
+  const parent = sub ? sec : '';
+  const sections = orderedSections(profile);
+  const ids = (sub ? sections.find((s) => s.id === sec)?.subs ?? [] : sections).map((x) => x.id);
+  const i = ids.indexOf(sub ?? sec);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return false;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  profile.order = { ...profile.order, [parent]: ids };
+  return true;
+}
+
 // ---------- sync ----------
 
 // What travels to the server: everything except device-local state.
@@ -141,6 +171,7 @@ export function mergeProfiles(local, remote) {
     onboarded: local.onboarded || remote.onboarded,
     langs: prefsFrom.langs,
     sections: prefsFrom.sections,
+    order: prefsFrom.order,
     sources: prefsFrom.sources,
     boostKeywords: prefsFrom.boostKeywords,
     muteKeywords: prefsFrom.muteKeywords,
