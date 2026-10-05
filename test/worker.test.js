@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import worker from '../src/worker.js';
+import worker, { planRun } from '../src/worker.js';
 
 function env() {
   const store = new Map();
@@ -82,4 +82,41 @@ test('with INVITES: login, cookie session, account sync code and revocation', as
 
   const out = await worker.fetch(req('/logout', authed), e);
   assert.match(out.headers.get('set-cookie'), /Max-Age=0/);
+});
+
+test('plans news updates every 30 min with AI on the even hours', () => {
+  const at = (hm) => planRun(new Date(`2026-10-05T${hm}:00Z`));
+  assert.deepEqual(at('05:17'), { ai: false });
+  assert.deepEqual(at('06:17'), { ai: true });
+  assert.deepEqual(at('06:47'), { ai: false });
+  assert.deepEqual(at('22:17'), { ai: true });
+  assert.deepEqual(at('22:47'), { ai: false });
+  assert.deepEqual(at('03:17'), { ai: false });
+  assert.equal(at('03:47'), null);
+  assert.equal(at('23:17'), null);
+  assert.equal(at('00:47'), null);
+});
+
+test('the cron dispatches the update workflow on GitHub', async () => {
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => (calls.push({ url, body: JSON.parse(init.body), auth: init.headers.authorization }), new Response(null, { status: 204 }));
+  try {
+    const run = async (iso, e) => {
+      const pending = [];
+      await worker.scheduled({ scheduledTime: Date.parse(iso) }, e, { waitUntil: (p) => pending.push(p) });
+      await Promise.all(pending);
+    };
+    await run('2026-10-05T10:17:00Z', { GITHUB_DISPATCH_TOKEN: 't', GITHUB_REPO: 'me/repo' });
+    await run('2026-10-05T10:47:00Z', { GITHUB_DISPATCH_TOKEN: 't', GITHUB_REPO: 'me/repo' });
+    await run('2026-10-05T23:47:00Z', { GITHUB_DISPATCH_TOKEN: 't' }); // night: nothing
+    await run('2026-10-05T10:17:00Z', {}); // no token: nothing
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].url, 'https://api.github.com/repos/me/repo/actions/workflows/update-news.yml/dispatches');
+    assert.equal(calls[0].auth, 'Bearer t');
+    assert.deepEqual(calls[0].body, { ref: 'main', inputs: { resumen_ia: 'si' } });
+    assert.deepEqual(calls[1].body.inputs, { resumen_ia: 'no' });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

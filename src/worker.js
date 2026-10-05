@@ -140,7 +140,42 @@ async function profileApi(request, env, url) {
   return json({ error: 'method not allowed' }, 405);
 }
 
+// ---------- news schedule ----------
+
+// GitHub's own cron is unreliable (runs hours late or never), so Cloudflare's cron, which fires
+// on time, launches the update workflow. Times are UTC, as in update-news.yml: every 30 min from
+// 5:17 to 22:47 plus 1:17 and 3:17; AI summaries on the even hours from 6:17 to 22:17.
+export function planRun(date) {
+  const h = date.getUTCHours();
+  const m = date.getUTCMinutes();
+  const slot = m >= 47 ? 47 : m >= 17 ? 17 : null; // a late tick still counts for its slot
+  if (slot === null) return null;
+  if (!(h >= 5 && h <= 22) && !(slot === 17 && (h === 1 || h === 3))) return null;
+  return { ai: slot === 17 && h % 2 === 0 && h >= 6 };
+}
+
+async function dispatchUpdate(env, scheduledTime) {
+  const plan = planRun(new Date(scheduledTime));
+  if (!plan || !env.GITHUB_DISPATCH_TOKEN) return;
+  const repo = env.GITHUB_REPO || 'jaime-otero/Webapp_Personal';
+  const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/update-news.yml/dispatches`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,
+      accept: 'application/vnd.github+json',
+      'user-agent': 'mi-diario-worker',
+      'x-github-api-version': '2022-11-28',
+    },
+    body: JSON.stringify({ ref: env.GITHUB_BRANCH || 'main', inputs: { resumen_ia: plan.ai ? 'si' : 'no' } }),
+  });
+  if (!res.ok) throw new Error(`GitHub dispatch ${res.status}: ${await res.text()}`);
+}
+
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(dispatchUpdate(env, event.scheduledTime));
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url);
     const invites = parseInvites(env.INVITES);
