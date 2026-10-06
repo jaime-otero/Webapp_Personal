@@ -71,11 +71,11 @@ La primera vez, `npm run ingest` descarga el modelo de embeddings (~130 MB) a `.
 
 La web puede pedir un **código de invitación**: cada persona tiene el suyo, lo escribe una vez y queda dentro (la sesión dura más de un año en ese dispositivo). Cada código es una cuenta: sus gustos se guardan en la nube y le siguen a cualquier dispositivo donde entre.
 
-1. En Cloudflare, *Workers & Pages → mi-diario → Settings → Variables and Secrets → Add*, tipo **Secret**, nombre `INVITES` y como valor un `nombre:código` por persona, separados por comas:
+1. En Cloudflare, *Workers & Pages → mi-diario → Settings → Variables and Secrets → Add*, tipo **Text** (para poder consultar los códigos ahí cuando quieras; si prefieres que no se vean, **Secret**), nombre `INVITES` y como valor un `nombre:código` por persona, separados por comas:
    ```
    jaime:sol-mesa-rio-47, ana:luna-pan-verde-12, pepe:tren-azul-casa-83
    ```
-   Usa códigos largos e inventados (3-4 palabras y un número). El secreto no está en el repo, así que puede ser público.
+   Usa códigos largos e inventados (3-4 palabras y un número). Ponlo solo en Cloudflare, nunca en `wrangler.jsonc`: el repo es público y cualquiera vería los códigos. `keep_vars` en `wrangler.jsonc` hace que los despliegues no borren la variable.
 2. Pásale a cada amigo la URL de la web y **su** código.
 3. Para invitar a alguien, añade su `nombre:código`; para quitarle el acceso, borra su entrada (o cámbiale el código).
 
