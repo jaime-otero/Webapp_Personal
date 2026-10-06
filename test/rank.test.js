@@ -49,6 +49,9 @@ test('hidden sections, muted outlets/keywords, dislikes and languages filter sto
   assert.equal(scoreStory(d, r, NOW), null);
   r.langs = ['es'];
   assert.equal(scoreStory(story('Hello', [], { lang: 'en' }), r, NOW), null);
+  // A story told by English and Spanish outlets still shows to someone who only reads Spanish.
+  assert.equal(scoreStory(story('Hello', [], { lang: 'en', langs: ['en', 'es'] }), r, NOW) === null, false);
+  assert.equal(scoreStory(story('Hello', [], { lang: 'en', langs: ['en'] }), r, NOW), null);
 });
 
 test('a like lifts similar stories, not unrelated ones; a dislike pushes them down', () => {

@@ -45,6 +45,8 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # onnxruntime-node (embeddings) bajaría ~300 MB de CUDA al instalarse; aquí solo se usa la CPU.
+      ONNXRUNTIME_NODE_INSTALL: skip
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -86,6 +88,22 @@ jobs:
           if [ "${{ inputs.resumen_ia }}" = "no" ]; then
             echo "SKIP_AI=1" >> "$GITHUB_ENV"
           fi
+      # Modelo de embeddings (~130 MB, se baja de Hugging Face la primera vez) y los vectores ya
+      # calculados de cada artículo: así cada ejecución solo calcula los de las noticias nuevas.
+      - name: Recuperar el modelo de embeddings
+        if: env.FRESH != '1'
+        uses: actions/cache@v6
+        with:
+          path: .cache/models
+          key: embed-models-${{ hashFiles('scripts/ingest/embed.js') }}
+          restore-keys: embed-models-
+      - name: Recuperar los embeddings anteriores
+        if: env.FRESH != '1'
+        uses: actions/cache@v6
+        with:
+          path: .cache/embeddings.json
+          key: embeddings-${{ github.run_id }}
+          restore-keys: embeddings-
       - name: Descargar feeds y generar resúmenes
         if: env.FRESH != '1'
         run: npm run ingest
@@ -96,6 +114,7 @@ jobs:
           GROQ_MODEL: ${{ vars.GROQ_MODEL }}
           GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_MODELS_MODEL: ${{ vars.GITHUB_MODELS_MODEL }}
+          EMBED_MODEL: ${{ vars.EMBED_MODEL }}
       - name: Publicar en Cloudflare Workers
         if: env.CLOUDFLARE_API_TOKEN != '' && env.FRESH != '1'
         uses: cloudflare/wrangler-action@v4

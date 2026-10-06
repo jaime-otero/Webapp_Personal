@@ -4,3 +4,5 @@ web/data/news.json
 .wrangler/
 web/data/meta.json
 .dev.vars
+.cache/
+web/data/vectors.json

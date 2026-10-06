@@ -10,10 +10,11 @@ Agregador de noticias personal y gratuito: recoge noticias de unos 50 medios fia
 Cron del Worker de Cloudflare → GitHub Actions (cada 30 min de 7 a 1 h, dos veces de madrugada; IA cada 2 h)
   └─ npm run ingest
        1. descarga los RSS de sources.json
-       2. limpia, deduplica y clasifica en secciones/subsecciones
-       3. agrupa la misma noticia entre medios y marca spoilers de la NBA
-       4. Gemini (gratis; de reserva Groq y GitHub Models): un briefing por sección + resúmenes de sus noticias top
-       5. escribe web/data/news.json
+       2. limpia, deduplica y calcula un embedding multilingüe por artículo (modelo local, sin API)
+       3. clasifica en secciones/subsecciones (reglas + prototipos de embeddings para los casos dudosos)
+       4. agrupa la misma noticia entre medios y entre español e inglés, y marca spoilers de la NBA
+       5. Gemini (gratis; de reserva Groq y GitHub Models): un briefing por sección + resúmenes de sus noticias top
+       6. escribe web/data/news.json (y los vectores de las noticias en web/data/vectors.json)
   └─ despliega en Cloudflare Workers: web/ (assets) + src/worker.js (API de sincronización, KV)
 
 Navegador (web/)
@@ -27,7 +28,8 @@ Navegador (web/)
 | `web/lib/taxonomy.js` | Secciones, subsecciones y palabras clave para clasificar |
 | `web/lib/spoilers.js` | Detector de resultados de la NBA |
 | `src/worker.js` | Worker: sirve la web y guarda el perfil sincronizado (KV) |
-| `scripts/ingest/` | Descarga, parseo, clasificación, agrupación y resúmenes IA (`jobs.js` decide qué noticias van a cada llamada) |
+| `scripts/ingest/` | Descarga, parseo, clasificación, agrupación y resúmenes IA (`jobs.js` decide qué noticias van a cada llamada; `embed.js`, los embeddings; `prototypes.js`, los prototipos de sección) |
+| `scripts/eval/` | Pares de titulares reales etiquetados y `cluster-eval.js`, que mide la agrupación (`npm run eval:cluster`) |
 | `web/` | La web/PWA estática (sin build); `sw.js` la deja funcionar sin conexión con la última edición |
 | `web/lib/rank.js` | Algoritmo de personalización (regresión logística online) |
 | `web/lib/profile.js` | Perfil del usuario, migración y fusión al sincronizar |
@@ -44,7 +46,10 @@ npm run ingest            # genera web/data/news.json
 GEMINI_API_KEY=xxx npm run ingest   # igual, con resúmenes IA
 npm run dev               # abre http://localhost:5173
 npm test
+npm run eval:cluster      # mide la agrupación con los pares etiquetados (compara los modelos)
 ```
+
+La primera vez, `npm run ingest` descarga el modelo de embeddings (~130 MB) a `.cache/models`; los vectores ya calculados se guardan en `.cache/embeddings.json`. `ONNXRUNTIME_NODE_INSTALL=skip npm install` evita que `onnxruntime-node` baje ~300 MB de CUDA que aquí no se usan.
 
 `npm run dev` sirve solo la web estática: sin el Worker no hay sincronización ni inicio de sesión. Para probarlo todo, `npx wrangler dev` (usa `web/` y `src/worker.js`, con un KV local; las invitaciones de prueba van en `.dev.vars` como `INVITES=yo:mi-codigo`).
 
@@ -91,6 +96,14 @@ Sin `INVITES` la web está abierta a cualquiera, como antes. El workflow funcion
 3. Sigue los pasos de [Ponerla en internet](#ponerla-en-internet-gratis): tus propios secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `GEMINI_API_KEY` (y `GROQ_API_KEY` si quieres) y, en Cloudflare, el secreto `GITHUB_DISPATCH_TOKEN` del cron del Worker, con `GITHUB_REPO` apuntando a tu repo en `wrangler.jsonc`.
 4. En la pestaña **Actions** de tu repo, activa los workflows si GitHub lo pide y lanza *Actualizar noticias → Run workflow*. En los forks GitHub desactiva las ejecuciones programadas hasta que las activas a mano.
 5. Para personalizarla: añade o quita medios en `sources.json` y ajusta secciones y palabras clave en `web/lib/taxonomy.js`.
+
+## Agrupación con embeddings
+
+Cada artículo (titular + extracto) se convierte en un vector con [`paraphrase-multilingual-MiniLM-L12-v2`](https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2) (ONNX cuantizado, CPU, [transformers.js](https://huggingface.co/docs/transformers.js)). Dos artículos son la misma noticia si su similitud (coseno + nombres propios y cifras en común − marcadores distintos) supera 0,66, a menos de 36 h; la agrupación es jerárquica de enlace medio. Se eligió el modelo y el umbral midiendo con 338 pares reales etiquetados: el algoritmo anterior, por palabras, agrupaba el 8 % de las noticias repetidas; este, el 80 % con un 83 % de precisión, también entre español e inglés. Detalles y cifras en el [estudio de viabilidad](docs/estudio-viabilidad.md#21-agrupación-y-clasificación-con-embeddings-coste-0).
+
+- Otro modelo: variable `EMBED_MODEL` (en GitHub, en *Settings → Secrets and variables → Actions → Variables*) (los candidatos y sus umbrales están en `scripts/ingest/embed.js`); `EMBED_MODEL=off` vuelve a la agrupación por palabras, que también se usa si el modelo no carga.
+- Si cambias el método, vuelve a medir con `npm run eval:cluster` (y añade pares a `scripts/eval/pairs.json` si ves errores).
+- `web/data/vectors.json` guarda el vector de cada noticia (int8 en base64) para una futura búsqueda y ordenación por significado; la web todavía no lo usa.
 
 ## Secciones
 

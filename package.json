@@ -7,10 +7,14 @@
   "scripts": {
     "ingest": "node scripts/ingest/index.js",
     "dev": "npx --yes serve web -l 5173",
-    "test": "node --test 'test/**/*.test.js'"
+    "test": "node --test 'test/**/*.test.js'",
+    "eval:cluster": "node scripts/eval/cluster-eval.js"
   },
   "engines": { "node": ">=20" },
   "dependencies": {
     "fast-xml-parser": "^5.11.2"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^4.3.0"
   }
 }

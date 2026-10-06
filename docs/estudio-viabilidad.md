@@ -1,6 +1,6 @@
 # Estudio de viabilidad: web/app de noticias personalizada y gratuita
 
-*Octubre de 2026 (actualizado el 6/10/2026 con lo que ya está hecho)*
+*Octubre de 2026 (actualizado el 6/10/2026 con lo que ya está hecho y con la agrupación por embeddings)*
 
 ## Conclusión
 
@@ -35,9 +35,20 @@ Por capas, de menos a más sofisticado:
 
 1. **Preferencias explícitas** (hecho): 7 secciones y sus subsecciones con 5 niveles (de "Ocultar" a "Me encanta") y el orden de las pestañas, idiomas, medios favoritos/silenciados, palabras clave a potenciar o silenciar y resultados de la NBA tapados.
 2. **Aprendizaje implícito** (hecho): ❤️, guardar y abrir una noticia suman; 👎 y ocultar restan. Un modelo de regresión logística online ajusta el peso de sus rasgos (sección, medio, palabras y pares de palabras del titular, nombres propios). Lo aprendido se va olvidando poco a poco (3 % al día) para seguir tus intereses actuales.
-3. **Señales editoriales** (hecho): si muchos medios cubren la misma noticia, sube; las noticias se agrupan para no ver la misma historia 6 veces; diversidad para que no copen la portada diez noticias del mismo tema, y 1 de cada 10 "para descubrir".
+3. **Señales editoriales** (hecho): si muchos medios cubren la misma noticia, sube; las noticias se agrupan para no ver la misma historia 6 veces, también entre español e inglés (ver 2.1); diversidad para que no copen la portada diez noticias del mismo tema, y 1 de cada 10 "para descubrir".
 4. **Correcciones** (hecho): con 🏷️ se mueve una noticia de sección, y la corrección se aplica también a las parecidas.
-5. **Recomendación semántica** (futuro): *embeddings* multilingües (p. ej. Cloudflare Workers AI o transformers.js en el navegador) para entender que “fusión nuclear” y “ITER” van juntos, incluso entre español e inglés.
+5. **Recomendación semántica** (en parte): los *embeddings* multilingües ya se calculan en cada edición (ver 2.1) y sirven para agrupar y clasificar; sus vectores se publican en `data/vectors.json` para el siguiente paso, ordenar y buscar por significado (que “fusión nuclear” e “ITER” vayan juntos), aún pendiente.
+
+### 2.1 Agrupación y clasificación con embeddings (coste 0)
+
+Antes, la misma noticia se agrupaba por palabras del titular: solo en el mismo idioma y con muy poca cobertura ("Merz visita Kiev" y "German chancellor visits Ukraine" quedaban separadas). Ahora el ingest calcula en GitHub Actions un vector por artículo con un modelo multilingüe pequeño que se ejecuta en la CPU con transformers.js (ONNX): sin API, sin clave y sin cuota.
+
+- **Modelo:** se compararon tres candidatos con 338 pares de titulares reales etiquetados a mano (`scripts/eval/`, `npm run eval:cluster`). Ganó `paraphrase-multilingual-MiniLM-L12-v2` (q8, 118 MB, ≈10 ms por artículo). `multilingual-e5-small` puntúa los pares español-inglés mucho más bajo que los del mismo idioma y casi no agrupa entre idiomas; EmbeddingGemma-300m (q4) fue peor y 9 veces más lento.
+- **Método** (como en la literatura de agrupación de noticias en flujo: Miranda et al. 2018; Saravanakumar et al. 2021): coseno entre vectores + bonificación por nombres propios y cifras compartidos − penalización si dos crónicas dan marcadores distintos, dentro de una ventana de 36 h, y agrupación jerárquica de enlace medio (no encadena historias por un tema común).
+- **Resultado** sobre los pares etiquetados: el algoritmo anterior agrupaba el 8 % de los pares que son la misma noticia (precisión 94 %, F1 0,15) y ninguno entre idiomas; el nuevo, el 80 % con un 83 % de precisión (F1 0,82; 0,83 entre español e inglés). En un ingest real: 1.426 artículos → 871 noticias (antes ≈1.320), 170 con varios medios (antes 52), 43 con medios en español e inglés.
+- **Clasificación:** prototipos de sección (vector medio de lo que publican los feeds temáticos en la misma edición). Por sí solos aciertan el 74 % frente al 95 % de las reglas, así que solo deciden los casos dudosos de los feeds generales (≈1,5 % de los artículos; en la revisión manual, 20 de 22 cambios correctos). En las noticias grandes, una sección entra si la usa al menos un cuarto de sus medios (la NBA, siempre).
+- **Coste de tiempo:** la primera vez, ≈30 s de ingest con descarga del modelo; luego el modelo y los vectores se guardan en la caché de Actions y cada edición solo calcula los artículos nuevos (≈2 s). Si el modelo no carga, se vuelve al algoritmo por palabras.
+- **Tamaño:** `news.json` baja de ≈1,07 MB a ≈0,78 MB (222 KB con gzip) porque hay menos noticias duplicadas; los vectores (int8, ≈0,45 MB) van aparte en `vectors.json`, que la web aún no descarga.
 
 El perfil vive en el navegador (`localStorage`) y, si se activa, se sincroniza entre dispositivos a través del Worker (Cloudflare KV): con un enlace con código aleatorio o, con el inicio de sesión por invitación, con la cuenta de cada persona. También se puede exportar/importar como archivo.
 
@@ -56,6 +67,7 @@ El perfil vive en el navegador (`localStorage`) y, si se activa, se sincroniza e
 | Hosting web y API | Cloudflare Workers (assets estáticos + Worker) | 100.000 peticiones/día (con el inicio de sesión todas pasan por el Worker) | ≈1.150 despliegues/mes |
 | Sincronización | Cloudflare KV | 100.000 lecturas y 1.000 escrituras/día | Una escritura por cambio, como mucho cada 15 s por dispositivo |
 | IA | Gemini free tier (+ Groq y GitHub Models) | Varias peticiones/min y cientos/día | ≈80/día |
+| Embeddings | transformers.js en el runner de Actions (modelo de Hugging Face, cacheado con `actions/cache`) | Sin cuota: CPU del runner | ≈2 s por edición (≈20 s la primera vez) |
 | App móvil | PWA | — | Instalable en Android, iOS y PC |
 
 **Frecuencia:** el cron del Worker de Cloudflare lanza la actualización **cada 30 min de 7:17 a 0:47** (hora de España en verano) y dos veces de madrugada (≈38 ediciones/día); el cron de GitHub queda de reserva porque se retrasa horas. Los resúmenes IA solo se regeneran cada 2 h; en las ediciones intermedias entran noticias nuevas y se conservan los resúmenes anteriores.
@@ -81,7 +93,9 @@ Por qué no un servidor “de verdad”: leer los RSS directamente desde el nave
 | Riesgo | Mitigación |
 |---|---|
 | Un feed cambia o se cae | El script continúa con los demás y lista los que fallan. |
-| Clasificación por palabras clave imperfecta | Palabras clave en `web/lib/taxonomy.js` y reglas en `scripts/ingest/classify.js`; el botón 🏷️ corrige una noticia (y las parecidas) y la lista de correcciones se puede copiar para afinar el clasificador; fase futura con embeddings o con la propia IA. |
+| Clasificación por palabras clave imperfecta | Palabras clave en `web/lib/taxonomy.js` y reglas en `scripts/ingest/classify.js`, con los prototipos de embeddings para los casos dudosos; el botón 🏷️ corrige una noticia (y las parecidas) y la lista de correcciones se puede copiar para afinar el clasificador. |
+| Agrupación errónea (dos noticias distintas juntas o la misma separada) | Umbral calibrado con pares etiquetados (`npm run eval:cluster` para volver a medir); nombres propios, marcadores y ventana de 36 h distinguen sucesos del mismo tema. Una noticia NBA nunca pierde su sección al agruparse (tapado de spoilers). |
+| El modelo de embeddings no se descarga o Hugging Face cambia | El ingest sigue con la agrupación por palabras; el modelo queda en la caché de Actions y se puede cambiar con `EMBED_MODEL`. |
 | Cuotas o modelos de IA cambian (Google retira versiones a menudo) | Se usan los alias `gemini-flash-latest` y, si falla, `gemini-flash-lite-latest`; después Groq y GitHub Models. La web funciona sin IA y reaprovecha los últimos resúmenes. Modelos configurables (`GEMINI_MODEL`, `GROQ_MODEL`, `GITHUB_MODELS_MODEL`). |
 | El cron de GitHub se retrasa o se desactiva tras 60 días sin actividad en el repo | El cron del Worker lanza el workflow a su hora; el de GitHub queda de reserva. Si GitHub lo desactiva, se reactiva desde *Actions*. |
 | Perfil solo en un dispositivo | Resuelto: sincronización por Cloudflare KV (enlace o cuenta por invitación) y exportar/importar. |
@@ -91,6 +105,6 @@ Por qué no un servidor “de verdad”: leer los RSS directamente desde el nave
 
 1. ✅ **MVP**: ingesta RSS, agrupación, clasificación, ranking personal, PWA, resúmenes IA.
 2. ✅ **Puesta en marcha**: Cloudflare Workers, Gemini con Groq y GitHub Models de reserva, cron del Worker (ver README).
-3. ✅ **Hecho después**: subsecciones y orden de pestañas, sincronización entre dispositivos, inicio de sesión por invitación, sin spoilers de la NBA, corrección de secciones, ordenar por recientes o por nº de medios, aviso de edición nueva.
-4. Pendiente: búsqueda, notificaciones push de temas favoritos, *embeddings*, briefing de mañana/tarde, más fuentes regionales.
+3. ✅ **Hecho después**: subsecciones y orden de pestañas, sincronización entre dispositivos, inicio de sesión por invitación, sin spoilers de la NBA, corrección de secciones, ordenar por recientes o por nº de medios, aviso de edición nueva, agrupación entre idiomas y clasificación con *embeddings*.
+4. Pendiente: búsqueda y ranking semánticos con `vectors.json`, notificaciones push de temas favoritos, briefing de mañana/tarde, más fuentes regionales.
 5. Si se abre al público: revisión legal, dominio propio.
