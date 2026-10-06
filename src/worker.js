@@ -4,7 +4,7 @@
 // The code is a random 128-bit id generated in the browser; whoever knows it can read and
 // write that profile, nothing else. Profiles hold reading preferences, no personal data.
 //
-// Optional login: with the INVITES secret set ("ana:código, pepe:otro…", one per person) the
+// Optional login: with the INVITES variable set (secret or dashboard text) ("ana:código, pepe:otro…", one per person) the
 // whole site asks for an invite code. Each person gets a cookie bound to their code (changing
 // or removing it logs them out) and an account sync code derived from it (GET /api/me), so
 // their profile follows them to any device where they log in. Without INVITES the site is open.
