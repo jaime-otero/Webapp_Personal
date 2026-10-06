@@ -6,6 +6,7 @@ import { classify } from './classify.js';
 import { clusterArticles } from './cluster.js';
 import { summarize, hasAIKey } from './summarize.js';
 import { SECTIONS } from '../../web/lib/taxonomy.js';
+import { aiJobs, inSection } from './jobs.js';
 import { isSpoiler } from '../../web/lib/spoilers.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -13,8 +14,6 @@ const OUT = resolve(ROOT, 'web/data/news.json');
 const META = resolve(ROOT, 'web/data/meta.json');
 const MAX_AGE_HOURS = 48;
 const MAX_PER_SOURCE = 30;
-const PORTADA_STORIES = 12;
-const SECTION_STORIES = 8;
 const AI_CONCURRENCY = 3;
 const USER_AGENT = 'Mozilla/5.0 (compatible; MiDiarioBot/0.1; lector RSS personal)';
 
@@ -58,26 +57,6 @@ async function loadPrevious() {
   }
 }
 
-function importance(story, now) {
-  const ageH = story.publishedAt ? (now - Date.parse(story.publishedAt)) / 3.6e6 : 48;
-  return story.sources.length * 2 + Math.max(0, 24 - ageH) / 6;
-}
-
-const inSection = (story, sec) => story.sections.some((s) => s === sec || s.startsWith(`${sec}/`));
-
-// One AI call per section: the portada (whole paper) plus every section of the taxonomy.
-// Spoiler stories never reach the model.
-function aiJobs(stories, now) {
-  const ranked = stories.filter((s) => !s.spoiler).sort((a, b) => importance(b, now) - importance(a, now));
-  const jobs = [{ id: 'portada', label: 'Portada', stories: ranked.slice(0, PORTADA_STORIES) }];
-  for (const sec of SECTIONS) {
-    jobs.push({ id: sec.id, label: sec.label, nba: false, stories: ranked.filter((s) => inSection(s, sec.id)).slice(0, SECTION_STORIES) });
-  }
-  // The NBA gets its own spoiler-free summaries (the EE. UU. briefing rarely covers it).
-  jobs.push({ id: 'eeuu/nba', label: 'NBA', nba: true, stories: ranked.filter((s) => s.sections.includes('eeuu/nba')).slice(0, SECTION_STORIES) });
-  return jobs.filter((j) => j.stories.length >= 2);
-}
-
 async function main() {
   const now = Date.now();
   const sources = JSON.parse(await readFile(resolve(ROOT, 'sources.json'), 'utf8'));
@@ -119,7 +98,7 @@ async function main() {
   const jobs = skipAI || !hasAIKey() ? [] : aiJobs(stories, now);
   const results = await mapLimit(jobs, AI_CONCURRENCY, async (job) => {
     try {
-      return await summarize(job.stories, { label: job.label, nba: job.nba });
+      return await summarize(job.stories, { label: job.label, nba: job.nba, now });
     } catch (err) {
       console.warn(`⚠ Resumen IA de "${job.label}" no disponible: ${err.message.slice(0, 300)}`);
       return null;
