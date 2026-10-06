@@ -161,3 +161,16 @@ test('classify with prototypes never touches the NBA', () => {
   assert.ok(clsP(lakers, ['espana'], proto('otras', 0.6)).includes('eeuu/nba'));
   assert.ok(!clsP('El Madrid gana en Getafe', ['espana'], proto('deportes', 0.6)).includes('eeuu/nba'));
 });
+
+test('parseFeed decodes entities in URLs, skips tracking pixels and drops "Leer"', () => {
+  const xml = `<?xml version="1.0"?><rss xmlns:media="http://search.yahoo.com/mrss/"><channel>
+    <item><title>Lakers</title><link>https://ex.com/a?at_medium=RSS&amp;at_campaign=rss</link>
+    <description>Los Lakers ganan a los Kings Leer</description>
+    <media:content url="http://secure-uk.imrworldwide.com/cgi-bin/m?cid=x&amp;cg=y" medium="image"/>
+    <media:thumbnail url="https://ex.com/a.jpg?width=140&amp;quality=85"/></item>
+  </channel></rss>`;
+  const [a] = parseFeed(xml, src);
+  assert.equal(a.url, 'https://ex.com/a?at_medium=RSS&at_campaign=rss');
+  assert.equal(a.image, 'https://ex.com/a.jpg?width=140&quality=85');
+  assert.equal(a.summary, 'Los Lakers ganan a los Kings');
+});

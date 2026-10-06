@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { cleanText, truncate, hash } from './text.js';
+import { cleanText, decodeEntities, truncate, hash } from './text.js';
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -13,15 +13,24 @@ const parser = new XMLParser({
 
 const asArray = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
 
+// The parser leaves entities alone, so URLs arrive as "?a=1&amp;b=2": decode them.
+const cleanUrl = (u) => decodeEntities(String(u).trim());
+
+// Audience-measurement pixels some feeds (Expansión) put in media:content.
+const TRACKER = /imrworldwide\.com|doubleclick\.net|\/pixel\.gif/i;
+
+// "… Leer" / "Leer más": the link label Unidad Editorial (El Mundo, Marca, Expansión) appends.
+const READ_MORE = /\s*(Leer( más)?|Seguir leyendo|Read more)\s*[.…]*$/i;
+
 function pickLink(item) {
   // Atom: <link href rel="alternate"/>; RSS: <link>text</link>
   for (const l of asArray(item.link)) {
-    if (typeof l === 'string') return l.trim();
-    if (l['@href'] && (!l['@rel'] || l['@rel'] === 'alternate')) return l['@href'];
-    if (l['#text']) return String(l['#text']).trim();
+    if (typeof l === 'string') return cleanUrl(l);
+    if (l['@href'] && (!l['@rel'] || l['@rel'] === 'alternate')) return cleanUrl(l['@href']);
+    if (l['#text']) return cleanUrl(l['#text']);
   }
-  if (typeof item.guid === 'string' && item.guid.startsWith('http')) return item.guid;
-  if (item.guid?.['#text']?.startsWith?.('http')) return item.guid['#text'];
+  if (typeof item.guid === 'string' && item.guid.startsWith('http')) return cleanUrl(item.guid);
+  if (item.guid?.['#text']?.startsWith?.('http')) return cleanUrl(item.guid['#text']);
   return '';
 }
 
@@ -33,13 +42,15 @@ function pickImage(item) {
     ...asArray(item.enclosure),
   ];
   for (const c of candidates) {
-    const url = c?.['@url'];
+    const url = c?.['@url'] && cleanUrl(c['@url']);
+    if (!url || TRACKER.test(url)) continue;
     const type = c?.['@type'] ?? c?.['@medium'] ?? 'image';
-    if (url && /image/.test(type)) return url;
-    if (url && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(url)) return url;
+    if (/image/.test(type)) return url;
+    if (/\.(jpe?g|png|webp|gif)(\?|$)/i.test(url)) return url;
   }
   const html = String(item['content:encoded'] ?? item.description ?? '');
-  return html.match(/<img[^>]+src=["']([^"']+)["']/i)?.[1] ?? null;
+  const src = html.match(/<img[^>]+src=["']([^"']+)["']/i)?.[1];
+  return src && !TRACKER.test(src) ? cleanUrl(src) : null;
 }
 
 function pickDate(item) {
@@ -56,7 +67,7 @@ export function parseFeed(xml, source) {
     const title = cleanText(item.title);
     const url = pickLink(item);
     if (!title || !url) continue;
-    const summary = truncate(cleanText(item.description ?? item.summary ?? item['content:encoded'] ?? item.content), 240);
+    const summary = truncate(cleanText(item.description ?? item.summary ?? item['content:encoded'] ?? item.content).replace(READ_MORE, ''), 240);
     const categories = asArray(item.category).map((c) => cleanText(typeof c === 'object' ? c['#text'] ?? c['@term'] : c)).filter(Boolean);
     out.push({
       id: hash(url),

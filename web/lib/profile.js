@@ -30,7 +30,7 @@ export function defaultProfile(now = Date.now()) {
     read: {},
     seen: {}, // storyId → { n: sessions seen, s: last session, k: skip learned } (not synced)
     sync: { code: null, lastPull: 0, lastPush: 0 },
-    prefsAt: now, // last change to explicit preferences
+    prefsAt: 0, // last change to explicit preferences; 0 = untouched defaults, so they never win a merge
     updatedAt: now,
   };
 }

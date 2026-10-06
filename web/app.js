@@ -817,7 +817,7 @@ function openOnboarding() {
       <label class="pick"><input type="checkbox" name="lang" value="es"${p.langs.includes('es') ? ' checked' : ''}><span>Español</span></label>
       <label class="pick"><input type="checkbox" name="lang" value="en"${p.langs.includes('en') ? ' checked' : ''}><span>Inglés</span></label>
     </div></fieldset>
-    <p class="muted small">¿Ya la usas en otro dispositivo? Activa “Sincronizar” en sus Ajustes y abre aquí el enlace.</p>
+    ${state.account?.name ? '' : '<p class="muted small">¿Ya la usas en otro dispositivo? Activa “Sincronizar” en sus Ajustes y abre aquí el enlace.</p>'}
     <button class="primary" value="ok">Empezar</button>
   </form>`;
   dlg.querySelector('form').addEventListener('submit', () => {
