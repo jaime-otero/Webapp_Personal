@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { planRun } from '../src/worker.js';
+import worker, { planRun, dispatchUpdate } from '../src/worker.js';
 
 function env() {
   const store = new Map();
@@ -122,5 +122,45 @@ test('the cron dispatches the update workflow on GitHub', async () => {
     assert.deepEqual(calls[1].body.inputs, { resumen_ia: 'no' });
   } finally {
     globalThis.fetch = realFetch;
+  }
+});
+
+test('data/meta.json is reachable without logging in, the rest of data/ is not', async () => {
+  const invites = { INVITES: 'ana:codigo', ASSETS: { fetch: async () => new Response('{}') } };
+  const get = (path) => worker.fetch(new Request(`https://x.test${path}`, { headers: { accept: 'application/json' } }), invites);
+  assert.equal((await get('/data/meta.json')).status, 200);
+  assert.equal((await get('/data/news.json')).status, 401);
+});
+
+test('a failed dispatch is retried on 5xx and network errors, never on 4xx', async () => {
+  const realFetch = globalThis.fetch;
+  const realLog = [console.log, console.warn, console.error];
+  console.log = console.warn = console.error = () => {};
+  const env = { GITHUB_DISPATCH_TOKEN: 't' };
+  const when = Date.parse('2026-10-05T10:17:00Z');
+  const run = (responses) => {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      const next = responses[Math.min(calls++, responses.length - 1)];
+      if (next === 'net') throw new Error('boom');
+      return new Response(next === 204 ? null : 'err', { status: next });
+    };
+    return dispatchUpdate(env, when, { retryDelayMs: 0 }).then(
+      () => ({ ok: true, calls }),
+      (error) => ({ ok: false, calls, error }),
+    );
+  };
+  try {
+    assert.deepEqual(await run([503, 'net', 204]), { ok: true, calls: 3 });
+    const bad = await run([401]);
+    assert.equal(bad.ok, false);
+    assert.equal(bad.calls, 1);
+    assert.match(bad.error.message, /GITHUB_DISPATCH_TOKEN/);
+    const down = await run([502]);
+    assert.equal(down.ok, false);
+    assert.equal(down.calls, 3);
+  } finally {
+    globalThis.fetch = realFetch;
+    [console.log, console.warn, console.error] = realLog;
   }
 });

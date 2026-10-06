@@ -13,7 +13,9 @@ const CODE_RE = /^[a-f0-9]{32}$/;
 const MAX_BYTES = 1024 * 1024; // a heavy profile (2 × 300 saved stories + the model) is ~600 KB
 const COOKIE = 'md_session';
 const COOKIE_MAX_AGE = 400 * 86400; // the longest browsers keep a cookie
-const PUBLIC = /^\/(sw\.js|manifest\.webmanifest|icons\/.*)$/; // reachable without logging in
+// Reachable without logging in. data/meta.json is only the edition date and story count: the
+// freshness checks of the workflows read it.
+const PUBLIC = /^\/(sw\.js|manifest\.webmanifest|icons\/.*|data\/meta\.json)$/;
 
 const json = (body, status = 200, headers = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers } });
@@ -154,11 +156,21 @@ export function planRun(date) {
   return { ai: slot === 17 && h % 2 === 0 && h >= 6 };
 }
 
-async function dispatchUpdate(env, scheduledTime) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Network errors and 5xx are retried (GitHub's API hiccups now and then); a 4xx never is. Every
+// outcome is logged, since nobody watches this Worker: a 401/403/404 almost always means the
+// GITHUB_DISPATCH_TOKEN expired or lost its Actions permission, and the workflows' freshness
+// check (vigilar-noticias.yml) is what tells the owner.
+export async function dispatchUpdate(env, scheduledTime, { retryDelayMs = 1000 } = {}) {
   const plan = planRun(new Date(scheduledTime));
-  if (!plan || !env.GITHUB_DISPATCH_TOKEN) return;
+  if (!plan) return;
+  if (!env.GITHUB_DISPATCH_TOKEN) {
+    console.error('dispatch skipped: GITHUB_DISPATCH_TOKEN is not set');
+    return;
+  }
   const repo = env.GITHUB_REPO || 'jaime-otero/Webapp_Personal';
-  const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/update-news.yml/dispatches`, {
+  const request = {
     method: 'POST',
     headers: {
       authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,
@@ -167,8 +179,31 @@ async function dispatchUpdate(env, scheduledTime) {
       'x-github-api-version': '2022-11-28',
     },
     body: JSON.stringify({ ref: env.GITHUB_BRANCH || 'main', inputs: { resumen_ia: plan.ai ? 'si' : 'no' } }),
-  });
-  if (!res.ok) throw new Error(`GitHub dispatch ${res.status}: ${await res.text()}`);
+  };
+  const url = `https://api.github.com/repos/${repo}/actions/workflows/update-news.yml/dispatches`;
+  const attempts = 3;
+  for (let i = 1; ; i++) {
+    let failure;
+    try {
+      const res = await fetch(url, request);
+      if (res.ok) {
+        console.log(`dispatch ok (${new Date(scheduledTime).toISOString()}, ai=${plan.ai}, attempt ${i})`);
+        return;
+      }
+      const hint = [401, 403, 404].includes(res.status) ? ' — GITHUB_DISPATCH_TOKEN caducado, revocado o sin permiso Actions: write?' : '';
+      failure = new Error(`GitHub dispatch ${res.status}${hint}: ${(await res.text()).slice(0, 300)}`);
+      failure.retry = res.status >= 500;
+    } catch (err) {
+      failure = new Error(`GitHub dispatch network error: ${err.message}`);
+      failure.retry = true;
+    }
+    if (!failure.retry || i === attempts) {
+      console.error(`${failure.message} (attempt ${i}/${attempts})`);
+      throw failure;
+    }
+    console.warn(`${failure.message}; retrying (attempt ${i}/${attempts})`);
+    await sleep(retryDelayMs * i);
+  }
 }
 
 export default {

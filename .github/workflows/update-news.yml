@@ -49,12 +49,6 @@ jobs:
       ONNXRUNTIME_NODE_INSTALL: skip
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm test
       # Edición anterior, guardada entre ejecuciones: de ella salen los resúmenes IA que se conservan
       # cuando la IA falla o no toca, y la hora de la última edición.
       - name: Recuperar la edición anterior
@@ -64,16 +58,30 @@ jobs:
           key: news-${{ github.run_id }}
           restore-keys: news-
       # El cron de GitHub es solo de reserva: si el Worker ya publicó hace menos de 20 min, no
-      # hace nada (así no se duplican ejecuciones ni resúmenes IA).
+      # hace nada (así no se duplican ejecuciones ni resúmenes IA). Se mira antes de instalar
+      # nada. La fecha sale de la web publicada (data/meta.json, variable SITE_URL) y, sin ella,
+      # de la edición recuperada de la caché.
       - name: ¿Edición reciente?
         if: github.event_name == 'schedule'
+        env:
+          SITE_URL: ${{ vars.SITE_URL }}
         run: |
-          if [ -f web/data/news.json ] && node -e "
-            const t = Date.parse(JSON.parse(require('fs').readFileSync('web/data/news.json')).generatedAt);
-            process.exit(Date.now() - t < 20 * 60e3 ? 0 : 1)"; then
-            echo "Edición de hace menos de 20 min: nada que hacer"
+          SOURCE="web/data/news.json"
+          if [ -n "$SITE_URL" ]; then SOURCE="${SITE_URL%/}/data/meta.json"; fi
+          if node scripts/ci/freshness.js "$SOURCE" 20; then
+            echo "Nada que hacer"
             echo "FRESH=1" >> "$GITHUB_ENV"
           fi
+      - uses: actions/setup-node@v7
+        if: env.FRESH != '1'
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        if: env.FRESH != '1'
+      # Los tests ya pasaron en el PR (CI); aquí solo se repiten al fusionar en main.
+      - run: npm test
+        if: env.FRESH != '1' && github.event_name == 'push'
       # Los resúmenes IA se regeneran cada 2 h; en las demás ejecuciones solo entran noticias nuevas
       # y se conservan los resúmenes de la edición anterior. El Worker lo indica con resumen_ia; en
       # el cron de GitHub se mira qué cron lanzó la ejecución, no la hora, porque se retrasa.
@@ -106,6 +114,7 @@ jobs:
           restore-keys: embeddings-
       - name: Descargar feeds y generar resúmenes
         if: env.FRESH != '1'
+        timeout-minutes: 6
         run: npm run ingest
         env:
           GEMINI_API_KEY: ${{ inputs.ai_provider != 'groq' && inputs.ai_provider != 'github' && secrets.GEMINI_API_KEY || '' }}
@@ -115,11 +124,24 @@ jobs:
           GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_MODELS_MODEL: ${{ vars.GITHUB_MODELS_MODEL }}
           EMBED_MODEL: ${{ vars.EMBED_MODEL }}
+      # Un fallo de red al desplegar (API de Cloudflare, descarga de wrangler) se reintenta una vez.
       - name: Publicar en Cloudflare Workers
+        id: deploy
         if: env.CLOUDFLARE_API_TOKEN != '' && env.FRESH != '1'
+        continue-on-error: true
+        timeout-minutes: 3
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: '4' # la acción instala 3.x por defecto, que no soporta Workers solo con assets
+          command: deploy
+      - name: Publicar en Cloudflare Workers (reintento)
+        if: steps.deploy.outcome == 'failure'
+        timeout-minutes: 3
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
           command: deploy
