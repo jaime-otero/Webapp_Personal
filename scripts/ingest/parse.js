@@ -20,7 +20,8 @@ const cleanUrl = (u) => decodeEntities(String(u).trim());
 const TRACKER = /imrworldwide\.com|doubleclick\.net|\/pixel\.gif/i;
 
 // "… Leer" / "Leer más": the link label Unidad Editorial (El Mundo, Marca, Expansión) appends.
-const READ_MORE = /\s*(Leer( más)?|Seguir leyendo|Read more)\s*[.…]*$/i;
+// Case-sensitive on purpose: "…aprender a leer" is text, not the label.
+const READ_MORE = /\s*(Leer( más)?|Seguir leyendo|Read more)\s*[.…]*$/;
 
 function pickLink(item) {
   // Atom: <link href rel="alternate"/>; RSS: <link>text</link>
