@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { planRun, dispatchUpdate } from '../src/worker.js';
+import worker, { planRun, dispatchUpdate, watchFreshness } from '../src/worker.js';
 
 function env() {
   const store = new Map();
@@ -162,5 +162,47 @@ test('a failed dispatch is retried on 5xx and network errors, never on 4xx', asy
   } finally {
     globalThis.fetch = realFetch;
     [console.log, console.warn, console.error] = realLog;
+  }
+});
+
+test('the watchdog alerts once when the edition goes stale and once when it recovers', async () => {
+  const realFetch = globalThis.fetch;
+  const realErr = console.error;
+  console.error = () => {};
+  const pushes = [];
+  globalThis.fetch = async (url, init) => (pushes.push({ url, body: init.body }), new Response(null, { status: 200 }));
+  const now = Date.parse('2026-10-05T12:17:00Z');
+  const e = env();
+  e.NTFY_TOPIC = 'mi-tema';
+  const edition = (minutesAgo) => {
+    e.ASSETS = { fetch: async () => Response.json({ generatedAt: new Date(now - minutesAgo * 60e3).toISOString() }) };
+  };
+  try {
+    edition(20);
+    await watchFreshness(e, now);
+    assert.equal(pushes.length, 0);
+    edition(150);
+    await watchFreshness(e, now);
+    await watchFreshness(e, now + 30 * 60e3); // still stale: no second push
+    assert.equal(pushes.length, 1);
+    assert.equal(pushes[0].url, 'https://ntfy.sh/mi-tema');
+    assert.match(pushes[0].body, /150 min/);
+    edition(10);
+    await watchFreshness(e, now);
+    assert.equal(pushes.length, 2);
+    assert.match(pushes[1].body, /vuelven/);
+    // before 7:00 UTC and at night nothing is checked
+    edition(500);
+    await watchFreshness(e, Date.parse('2026-10-05T06:17:00Z'));
+    await watchFreshness(e, Date.parse('2026-10-05T23:17:00Z'));
+    assert.equal(pushes.length, 2);
+    // without NTFY_TOPIC it only logs
+    delete e.NTFY_TOPIC;
+    e.store.clear();
+    await watchFreshness(e, now);
+    assert.equal(pushes.length, 2);
+  } finally {
+    globalThis.fetch = realFetch;
+    console.error = realErr;
   }
 });

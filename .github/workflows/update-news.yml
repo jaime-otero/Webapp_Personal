@@ -23,7 +23,7 @@ on:
       resumen_ia:
         description: 'Regenerar los resúmenes IA (no = solo noticias nuevas, conserva los resúmenes)'
         type: choice
-        options: [si, no]
+        options: ['si', 'no'] # entre comillas: sin ellas, YAML puede leer no como false y la API rechaza el lanzamiento
         default: si
   push:
     branches: [main]
