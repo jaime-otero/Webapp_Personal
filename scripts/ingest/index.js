@@ -1,9 +1,12 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
+import { gzipSync } from 'node:zlib';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseFeed } from './parse.js';
 import { classify } from './classify.js';
 import { clusterArticles } from './cluster.js';
+import { loadEmbedder, embedArticles, toInt8B64 } from './embed.js';
+import { buildPrototypes } from './prototypes.js';
 import { summarize, hasAIKey } from './summarize.js';
 import { SECTIONS } from '../../web/lib/taxonomy.js';
 import { aiJobs, inSection } from './jobs.js';
@@ -12,6 +15,7 @@ import { isSpoiler } from '../../web/lib/spoilers.js';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = resolve(ROOT, 'web/data/news.json');
 const META = resolve(ROOT, 'web/data/meta.json');
+const VECTORS = resolve(ROOT, 'web/data/vectors.json');
 const MAX_AGE_HOURS = 48;
 const MAX_PER_SOURCE = 30;
 const AI_CONCURRENCY = 3;
@@ -77,8 +81,28 @@ async function main() {
     else byId.set(a.id, a);
   }
   const articles = [...byId.values()];
-  for (const a of articles) a.sections = classify(a);
-  const stories = clusterArticles(articles);
+
+  // Multilingual embeddings (local model, cached between runs). Any failure → word-based grouping.
+  const t0 = Date.now();
+  let emb = null;
+  const embedder = process.env.EMBED_MODEL === 'off' ? null : await loadEmbedder();
+  if (embedder) {
+    try {
+      emb = { ...(await embedArticles(articles, embedder)), embedder };
+    } catch (err) {
+      console.warn(`⚠ Embeddings no disponibles: ${err.message}. Se usa la agrupación por palabras.`);
+    }
+  }
+  const embedSecs = ((Date.now() - t0) / 1000).toFixed(1);
+
+  // Section prototypes from this run's topical feeds settle borderline keyword calls (classify.js).
+  const protos = emb && buildPrototypes(articles, emb.vectors);
+  let adjusted = 0;
+  for (const a of articles) {
+    a.sections = classify(a, { proto: protos?.score(emb.vectors.get(a.id)) });
+    if (protos && a.sections.join() !== classify(a).join()) adjusted++;
+  }
+  const stories = clusterArticles(articles, emb ? { vectors: emb.vectors, link: emb.embedder.link } : {});
   for (const s of stories) if (isSpoiler(s)) s.spoiler = true;
 
   const previous = await loadPrevious();
@@ -122,11 +146,26 @@ async function main() {
   await writeFile(OUT, JSON.stringify(output));
   // Tiny file the open web app polls to know when a new edition is out.
   await writeFile(META, JSON.stringify({ generatedAt: output.generatedAt, stories: stories.length }));
+  // Story vectors (int8, base64) for the future semantic ranking and search, in their own file so
+  // news.json does not grow. Only stories of the last 48 h.
+  const recent = stories.filter((s) => s.vec && (!s.publishedAt || now - Date.parse(s.publishedAt) < MAX_AGE_HOURS * 3.6e6));
+  const vectorsJson = emb
+    ? JSON.stringify({ generatedAt: output.generatedAt, model: emb.embedder.id, dims: emb.embedder.dims, vectors: Object.fromEntries(recent.map((s) => [s.id, toInt8B64(s.vec)])) })
+    : null;
+  if (vectorsJson) await writeFile(VECTORS, vectorsJson);
+  else await rm(VECTORS, { force: true });
 
   const failed = status.filter((s) => !s.ok);
   const count = (sec) => stories.filter((s) => inSection(s, sec)).length;
   console.log(`✓ ${articles.length} artículos → ${stories.length} noticias de ${status.length - failed.length}/${status.length} fuentes`);
   console.log(`  por sección: ${SECTIONS.map((s) => `${s.id} ${count(s.id)}`).join(', ')}, nba ${count('eeuu/nba')} (spoilers ${stories.filter((s) => s.spoiler).length})`);
+  const kb = (str) => `${Math.round(Buffer.byteLength(str) / 1024)} KB (${Math.round(gzipSync(str).length / 1024)} KB gzip)`;
+  console.log(
+    emb
+      ? `  embeddings: ${emb.embedder.id}, ${emb.computed} nuevos + ${emb.cached} de caché en ${embedSecs} s; ES+EN juntas: ${stories.filter((s) => s.langs.length > 1).length}; secciones ajustadas por prototipos: ${protos ? adjusted : 'no (pocos ejemplos)'}`
+      : '  embeddings: no (agrupación por palabras)',
+  );
+  console.log(`  news.json ${kb(JSON.stringify(output))}${vectorsJson ? `, vectors.json ${kb(vectorsJson)}` : ''}`);
   console.log(`  multi-fuente: ${stories.filter((s) => s.sources.length > 1).length}, con resumen IA: ${stories.filter((s) => s.aiSummary).length}, briefings nuevos: ${skipAI ? '0 (IA omitida)' : fresh}/${Object.keys(briefings).length}`);
   const models = [...new Set(Object.values(briefings).filter((b) => b.at === output.generatedAt).map((b) => b.model))];
   if (models.length) console.log(`  modelos IA: ${models.join(', ')}`);

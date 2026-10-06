@@ -134,3 +134,30 @@ test('classify: world-region feeds send stories about Spain to España', () => {
   // Mostly about Europe, Spain only mentioned: stays in Europa.
   assert.deepEqual(cls('EU leaders back Spain on migration plan', ['internacional/europa']), ['internacional/europa']);
 });
+
+// Prototype hints (prototypes.js) as classify receives them: the nearest topic and its margin.
+const proto = (best, margin) => ({ best, margin });
+const clsP = (title, feedSections, p, summary = '') => classify({ title, summary, categories: [], feedSections }, { proto: p });
+
+test('classify with prototypes: a clear sports story without keywords joins Deportes; a doubtful one does not', () => {
+  const cricket = 'Harmanpreet Kaur deja la capitanía de la selección india de críquet';
+  assert.deepEqual(cls(cricket, ['internacional']), ['internacional/asia']);
+  assert.deepEqual(clsP(cricket, ['internacional'], proto('deportes', 0.3)).sort(), ['deportes', 'internacional/asia']);
+  assert.deepEqual(clsP(cricket, ['internacional'], proto('deportes', 0.05)), ['internacional/asia']);
+  // Topical feeds keep their rules: the prototypes are built from them.
+  assert.deepEqual(clsP('Nuevo récord de velocidad en el túnel', ['deportes/motor'], proto('tecnologia', 0.5)), cls('Nuevo récord de velocidad en el túnel', ['deportes/motor']));
+});
+
+test('classify with prototypes: a topic that just made the keyword threshold goes when they point elsewhere', () => {
+  const title = 'Un ciberataque contra la app de una empresa de moda';
+  const summary = 'La compañía investiga el ciberataque; los clientes recibieron notificaciones de hackers en su móvil';
+  assert.deepEqual(clsP(title, ['internacional'], null, summary).sort(), ['economia/empresas', 'internacional', 'tecnologia']);
+  assert.deepEqual(clsP(title, ['internacional'], proto('tecnologia', 0.2), summary).sort(), ['internacional', 'tecnologia']);
+});
+
+test('classify with prototypes never touches the NBA', () => {
+  const lakers = 'Los Lakers fichan a un base suplente';
+  assert.deepEqual(clsP(lakers, ['espana'], proto('otras', 0.6)), cls(lakers, ['espana']));
+  assert.ok(clsP(lakers, ['espana'], proto('otras', 0.6)).includes('eeuu/nba'));
+  assert.ok(!clsP('El Madrid gana en Getafe', ['espana'], proto('deportes', 0.6)).includes('eeuu/nba'));
+});

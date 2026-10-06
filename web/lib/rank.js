@@ -129,7 +129,8 @@ const containsKeyword = (text, kw) => kw && normalize(text).includes(normalize(k
 // Returns { score, learned, reasons } or null when the story must not be shown.
 export function scoreStory(story, profile, now = Date.now()) {
   if (profile.hidden[story.id] || profile.disliked[story.id]) return null;
-  if (!profile.langs.includes(story.lang)) return null;
+  // A story told in both languages shows if any of its outlets writes in one the person reads.
+  if (!(story.langs ?? [story.lang]).some((l) => profile.langs.includes(l))) return null;
   const sourceWeights = story.sources.map((s) => profile.sources[s.sourceId] ?? 0);
   if (sourceWeights.every((w) => w < 0)) return null;
   const text = `${story.title} ${story.summary ?? ''}`;

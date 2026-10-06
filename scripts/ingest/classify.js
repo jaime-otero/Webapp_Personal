@@ -1,4 +1,5 @@
 import { scoreGroups } from '../../web/lib/taxonomy.js';
+import { TOPICS, feedTopic } from './prototypes.js';
 
 // Assigns each article to sections/subsections ("espana/deportes", "ciencia/fisica"…).
 //
@@ -9,6 +10,14 @@ import { scoreGroups } from '../../web/lib/taxonomy.js';
 //
 // A keyword group counts when it scores ≥ 2 (one hit in the title or two in the body). Topical
 // sections need ≥ 3 on general news feeds, so "dos muertos por el temporal" stays out of Clima.
+//
+// With embeddings (`proto`: the article's nearest section prototype, see prototypes.js), borderline
+// topical calls on general feeds are settled by them: a topic with some keyword evidence below the
+// threshold comes in when the prototype clearly agrees (sports even without keywords), and one that
+// just made the threshold goes when the prototype clearly points elsewhere. Regions and US sports
+// (NBA, NFL, college) stay with the rules.
+const ADD_MARGIN = 0.15;
+const VETO_MARGIN = 0.15;
 
 const REGIONS = ['espana', 'eeuu', 'europa', 'latam', 'oriente-medio', 'asia'];
 const REGION_SECTION = { espana: 'espana', eeuu: 'eeuu', europa: 'internacional/europa', latam: 'internacional/latam', 'oriente-medio': 'internacional/oriente-medio', asia: 'internacional/asia' };
@@ -40,7 +49,7 @@ function pickRegion(scores, hint) {
   return best;
 }
 
-export function classify(article) {
+export function classify(article, { proto = null } = {}) {
   const hints = article.feedSections ?? [];
   const scores = scoreGroups(article.title, `${article.summary ?? ''} ${(article.categories ?? []).join(' ')}`);
   const has = (group, min = 2) => (scores[group] ?? 0) >= min;
@@ -96,6 +105,22 @@ export function classify(article) {
     }
     const evidence = has(generic, 2) || Object.values(subs).some((g) => has(g, 2));
     if (!any && ((hints.includes(sec) && (trusted || evidence)) || has(generic, min))) sections.add(sec);
+  }
+
+  const topicalFeed = feedTopic(hints);
+  if (proto && !usSport && (topicalFeed === null || topicalFeed === 'otras')) {
+    const evidence = (sec) => Math.max(scores[TOPICAL[sec].generic] ?? 0, ...Object.values(TOPICAL[sec].subs).map((g) => scores[g] ?? 0));
+    const present = (sec) => [...sections].some((s) => s === sec || s.startsWith(`${sec}/`));
+    const { best, margin } = proto;
+    if (TOPICS.includes(best) && !present(best) && margin >= ADD_MARGIN && (best === 'deportes' || evidence(best) >= 1)) {
+      const [sub, top] = Object.entries(TOPICAL[best].subs).reduce((acc, [id, g]) => ((scores[g] ?? 0) > acc[1] ? [id, scores[g]] : acc), [null, 0]);
+      sections.add(sub && top >= 1 ? `${best}/${sub}` : best);
+    }
+    for (const sec of TOPICS) {
+      if (sec === best || !present(sec) || margin < VETO_MARGIN || evidence(sec) > min) continue;
+      const rest = [...sections].filter((s) => s !== sec && !s.startsWith(`${sec}/`));
+      if (rest.length) for (const s of [...sections]) if (s === sec || s.startsWith(`${sec}/`)) sections.delete(s);
+    }
   }
 
   // The science and economics Nobels belong to those sections wherever they come from.
