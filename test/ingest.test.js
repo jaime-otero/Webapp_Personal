@@ -5,11 +5,12 @@ import { classify } from '../scripts/ingest/classify.js';
 import { clusterArticles } from '../scripts/ingest/cluster.js';
 import { cleanText } from '../scripts/ingest/text.js';
 
-const src = { id: 'test', name: 'Test', lang: 'en', region: 'int', sections: [] };
+const src = { id: 'test', name: 'Test', lang: 'en', sections: [] };
 
 test('cleanText strips raw, CDATA and entity-escaped HTML', () => {
   assert.equal(cleanText('<p>Hola <b>mundo</b></p>'), 'Hola mundo');
   assert.equal(cleanText('&lt;p&gt;Caf&eacute; &amp;amp; t&#233;&lt;/p&gt;'), 'Café & té');
+  assert.equal(cleanText('Mal &#99999999; código'), 'Mal &#99999999; código');
 });
 
 test('parseFeed reads RSS 2.0 with media image', () => {
@@ -54,6 +55,9 @@ test('classify: NBA always lands in EE. UU. → NBA, from any outlet', () => {
   assert.ok(cls('Doncic se pone la corona de los Lakers: "Estoy listo"', ['espana/deportes']).includes('eeuu/nba'));
   assert.ok(cls('Could the Bucks become the center of the trade market?', ['eeuu/nba']).includes('eeuu/nba'));
   assert.ok(!cls('Póquer de Pina con un Barça de cine', ['espana/deportes']).includes('eeuu/nba'));
+  assert.ok(cls('Hugo González, titular en el estreno de la temporada', ['espana/deportes']).includes('eeuu/nba'));
+  const swimmer = cls('Hugo González de Oliveira, plata en los 200 espalda', ['deportes/acuaticos']);
+  assert.ok(!swimmer.includes('eeuu/nba') && swimmer.includes('deportes/acuaticos'), swimmer.join());
 });
 
 test('classify: topical sections, stricter on general news feeds', () => {

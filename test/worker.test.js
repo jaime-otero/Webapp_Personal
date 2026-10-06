@@ -27,7 +27,7 @@ test('rejects bad codes, invalid JSON and oversized bodies; other paths are asse
   assert.equal((await worker.fetch(req('/api/profile/short'), e)).status, 404);
   assert.equal((await worker.fetch(req(`/api/profile/${CODE}`, { method: 'PUT', body: 'nope' }), e)).status, 400);
   assert.equal((await worker.fetch(req(`/api/profile/${CODE}`, { method: 'PUT', body: '[1]' }), e)).status, 400);
-  assert.equal((await worker.fetch(req(`/api/profile/${CODE}`, { method: 'PUT', body: JSON.stringify({ x: 'y'.repeat(300000) }) }), e)).status, 413);
+  assert.equal((await worker.fetch(req(`/api/profile/${CODE}`, { method: 'PUT', body: JSON.stringify({ x: 'y'.repeat(1_100_000) }) }), e)).status, 413);
   assert.equal((await worker.fetch(req(`/api/profile/${CODE}`, { method: 'DELETE' }), e)).status, 405);
   assert.equal(await (await worker.fetch(req('/index.html'), e)).text(), 'asset');
   assert.equal(e.store.size, 0);
@@ -79,6 +79,10 @@ test('with INVITES: login, cookie session, account sync code and revocation', as
   assert.equal((await worker.fetch(req('/api/me', { headers: { cookie: forged } }), e)).status, 401);
   const changed = { ...e, INVITES: 'ana:otra-clave' };
   assert.equal((await worker.fetch(req('/api/me', authed), changed)).status, 401);
+
+  const dotted = { ...e, INVITES: 'jaime.otero:sol-mesa' };
+  const jaime = (await worker.fetch(req('/login', form('sol-mesa')), dotted)).headers.get('set-cookie').split(';')[0];
+  assert.equal((await (await worker.fetch(req('/api/me', { headers: { cookie: jaime } }), dotted)).json()).name, 'jaime.otero');
 
   const out = await worker.fetch(req('/logout', authed), e);
   assert.match(out.headers.get('set-cookie'), /Max-Age=0/);

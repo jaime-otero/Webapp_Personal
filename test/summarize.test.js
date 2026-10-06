@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { summarize, buildPrompt } from '../scripts/ingest/summarize.js';
 import { aiJobs } from '../scripts/ingest/jobs.js';
 
-const stories = [{ id: 'abc', topics: ['fisica'], summary: 'x', sources: [{ source: 'CERN', title: 'New boson' }] }];
+const stories = [{ id: 'abc', sections: ['ciencia/fisica'], summary: 'x', sources: [{ source: 'CERN', title: 'New boson' }] }];
 
 test('summarize is skipped without an API key', async () => {
   assert.equal(await summarize(stories, { apiKey: '', groqKey: '', githubToken: '' }), null);
@@ -47,6 +47,29 @@ test('falls back to Groq when every Gemini model fails', async (t) => {
   assert.deepEqual(res.summaries, { abc: 'Resumen Groq.' });
   assert.match(res.model, /^groq\//);
   assert.equal(calls.filter((u) => u.includes('generativelanguage')).length, 2, 'tries both Gemini models first');
+});
+
+test('a timeout, a network error or a broken JSON answer also moves on to the next model', async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    calls.push(url);
+    if (url.includes('flash-latest')) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    if (url.includes('generativelanguage')) return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"briefing": "cortado' }] } }] }));
+    if (url.includes('groq') && calls.filter((u) => u.includes('groq')).length === 1) throw new TypeError('fetch failed');
+    return groqReply('{"briefing":"Desde Groq.","stories":[]}');
+  });
+  const res = await summarize(stories, { apiKey: 'k', groqKey: 'g' });
+  assert.equal(res.briefing, 'Desde Groq.');
+  assert.equal(calls.filter((u) => u.includes('generativelanguage')).length, 2, 'both Gemini models');
+  assert.equal(calls.filter((u) => u.includes('groq')).length, 2, 'the second Groq model after a network error');
+});
+
+test('an answer without briefing or stories counts as a failure', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (url) =>
+    url.includes('generativelanguage') ? new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"error":"x"}' }] } }] })) : groqReply('{"briefing":"Ok.","stories":[]}'),
+  );
+  assert.match((await summarize(stories, { apiKey: 'k', groqKey: 'g' })).model, /^groq\//);
+  await assert.rejects(summarize(stories, { apiKey: 'k' }), /gemini .*JSON sin briefing/);
 });
 
 test('uses Groq alone when there is no Gemini key, and reports both failures', async (t) => {

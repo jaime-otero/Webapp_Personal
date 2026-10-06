@@ -16,7 +16,8 @@ const DAILY_DECAY = 0.97;
 
 // ---------- features ----------
 
-const ENTITY_RE = /\b(?:[A-ZÁÉÍÓÚÑ][\p{L}'’.-]+|[A-Z]{2,}\d*)(?:\s+(?:de\s+(?:la\s+|los\s+)?)?(?:[A-ZÁÉÍÓÚÑ][\p{L}'’.-]+|[A-Z]{2,}\d*))*/gu;
+// Starts at a word boundary that also works before accented capitals (\b is ASCII-only): Óscar, Ángel.
+const ENTITY_RE = /(?<![\p{L}\p{N}])(?:\p{Lu}[\p{L}'’.-]+|[A-Z]{2,}\d*)(?:\s+(?:de\s+(?:la\s+|los\s+)?)?(?:\p{Lu}[\p{L}'’.-]+|[A-Z]{2,}\d*))*/gu;
 const ENTITY_STOP = new Set(['el', 'la', 'los', 'las', 'un', 'una', 'the', 'a', 'an', 'en', 'in', 'por', 'how', 'why', 'what', 'who', 'this', 'es', 'se']);
 
 // Proper names in the title ("Golden State", "CERN", "Pedro Sánchez"), skipping the

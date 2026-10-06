@@ -14,6 +14,7 @@ const ids = (entries) => entries.map((e) => e.story.id);
 test('entities picks proper names, not the first word of the sentence', () => {
   assert.deepEqual(entities('Los Golden State Warriors fichan a un base del CERN'), ['golden state warriors', 'cern']);
   assert.deepEqual(entities('Pedro Sánchez se reúne con Merz'), ['pedro sanchez', 'merz']);
+  assert.deepEqual(entities('Óscar Puente se reúne con Ángel Víctor Torres'), ['oscar puente', 'angel victor torres']);
 });
 
 test('features include sections, parent section, outlet, words, pairs and entities', () => {

@@ -1,7 +1,7 @@
-// AI summaries: one request per section and run (10 sections × ~9 AI runs/day ≈ 90 requests/day).
+// AI summaries: one request per job and AI run (portada + 7 sections + NBA = 9 jobs, ~9 AI runs/day).
 // Providers, in order: Gemini (free tier); if it fails or has no key, Groq (free tier); and last,
 // GitHub Models, which in Actions needs no extra key (the workflow's GITHUB_TOKEN with models: read).
-// With neither key, or if both fail, the caller keeps the previous summaries.
+// Without any key, or if all of them fail, the caller keeps the previous summaries.
 
 import { isSpoilerText } from '../../web/lib/spoilers.js';
 
@@ -13,17 +13,33 @@ const GROQ_MODELS = [...new Set([process.env.GROQ_MODEL, 'openai/gpt-oss-120b', 
 const GITHUB_MODELS = [...new Set([process.env.GITHUB_MODELS_MODEL, 'openai/gpt-4.1-mini', 'openai/gpt-4o-mini'].filter(Boolean))];
 const TIMEOUT = 120_000;
 
-// Try each model in turn; 404 (retired), 429 (quota) and 5xx (overloaded) move on to the next.
-// A 429 that asks to wait a little (Groq's per-minute token limit) is retried on the same
-// model after the requested pause, up to MAX_WAITS times.
+// Try each model in turn; 404 (retired), 429 (quota) and 5xx (overloaded) move on to the next, and
+// so do a timeout, a network error or an answer that is not the expected JSON. A 429 that asks to
+// wait a little (Groq's per-minute token limit) is retried on the same model after the requested
+// pause, up to MAX_WAITS times.
 const MAX_WAITS = 3;
 const MAX_WAIT_S = 30;
 
-async function tryModels(provider, models, request, errors) {
+// The model's JSON answer ({briefing, stories}); throws if it is cut short or has another shape.
+function parseAnswer(text) {
+  const parsed = JSON.parse(text.replace(/^```(?:json)?|```$/g, '').trim());
+  if (!parsed || typeof parsed !== 'object' || !('briefing' in parsed || 'stories' in parsed)) throw new Error('JSON sin briefing ni stories');
+  return parsed;
+}
+
+// `read` pulls the answer's text out of the provider's response body.
+async function tryModels(provider, models, request, read, errors) {
   for (const model of models) {
+    let next = true;
     for (let attempt = 0; ; attempt++) {
-      const res = await fetch(...request(model));
-      if (res.ok) return { model, data: await res.json() };
+      let res;
+      try {
+        res = await fetch(...request(model));
+        if (res.ok) return { model, answer: parseAnswer(read(await res.json())) };
+      } catch (err) {
+        errors.push(`${provider} ${model}: ${String(err?.message ?? err).slice(0, 160)}`);
+        break;
+      }
       const wait = Number(res.headers.get('retry-after'));
       if (res.status === 429 && wait > 0 && wait <= MAX_WAIT_S && attempt < MAX_WAITS) {
         await res.text();
@@ -31,15 +47,16 @@ async function tryModels(provider, models, request, errors) {
         continue;
       }
       errors.push(`${provider} ${model} ${res.status}: ${(await res.text()).slice(0, 160)}`);
+      next = res.status === 404 || res.status === 429 || res.status >= 500;
       break;
     }
-    const last = errors.at(-1) ?? '';
-    if (!/ (404|429|5\d\d): /.test(last)) break;
+    if (!next) break;
   }
   return null;
 }
 
 const chatMessages = ({ system, user }) => [{ role: 'system', content: system }, { role: 'user', content: user }];
+const chatText = (data) => data.choices?.[0]?.message?.content ?? '';
 
 async function callGemini(prompt, apiKey, errors) {
   const body = JSON.stringify({
@@ -47,11 +64,10 @@ async function callGemini(prompt, apiKey, errors) {
     contents: [{ role: 'user', parts: [{ text: prompt.user }] }],
     generationConfig: { responseMimeType: 'application/json', temperature: 0.3, maxOutputTokens: 16384 },
   });
-  const r = await tryModels('gemini', GEMINI_MODELS, (model) => [
+  return tryModels('gemini', GEMINI_MODELS, (model) => [
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey }, body, signal: AbortSignal.timeout(TIMEOUT) },
-  ], errors);
-  return r && { model: r.model, text: r.data.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') ?? '' };
+  ], (data) => data.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') ?? '', errors);
 }
 
 async function callGroq(prompt, apiKey, errors) {
@@ -63,8 +79,8 @@ async function callGroq(prompt, apiKey, errors) {
       body: JSON.stringify({ model, messages: chatMessages(prompt), response_format: { type: 'json_object' }, temperature: 0.3 }),
       signal: AbortSignal.timeout(TIMEOUT),
     },
-  ], errors);
-  return r && { model: `groq/${r.model}`, text: r.data.choices?.[0]?.message?.content ?? '' };
+  ], chatText, errors);
+  return r && { ...r, model: `groq/${r.model}` };
 }
 
 async function callGitHubModels(prompt, token, errors) {
@@ -76,8 +92,8 @@ async function callGitHubModels(prompt, token, errors) {
       body: JSON.stringify({ model, messages: chatMessages(prompt), response_format: { type: 'json_object' }, temperature: 0.3, max_tokens: 4000 }),
       signal: AbortSignal.timeout(TIMEOUT),
     },
-  ], errors);
-  return r && { model: `github/${r.model}`, text: r.data.choices?.[0]?.message?.content ?? '' };
+  ], chatText, errors);
+  return r && { ...r, model: `github/${r.model}` };
 }
 
 export const hasAIKey = () => !!(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY || process.env.GITHUB_MODELS_TOKEN);
@@ -149,12 +165,11 @@ export async function summarize(
   if (!out && groqKey) out = await callGroq(prompt, groqKey, errors);
   if (!out && githubToken) out = await callGitHubModels(prompt, githubToken, errors);
   if (!out) throw new Error(errors.join(' | '));
-  const { model, text } = out;
-  const parsed = JSON.parse(text.replace(/^```(?:json)?|```$/g, '').trim());
+  const { model, answer: parsed } = out;
   const clean = (t) => (nba ? stripSpoilers(t) : t);
   const summaries = {};
   const ids = new Set(stories.map((s) => s.id));
-  for (const item of parsed.stories ?? []) {
+  for (const item of Array.isArray(parsed.stories) ? parsed.stories : []) {
     if (typeof item?.resumen !== 'string') continue;
     // Models sometimes mangle the opaque id; fall back to the list index.
     const id = ids.has(item.id) ? item.id : stories[item.i]?.id;

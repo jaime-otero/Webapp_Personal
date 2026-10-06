@@ -1,7 +1,8 @@
 // Sections, subsections and the keyword groups used to classify news. Shared by the ingest
 // script (Node) and the web app (browser).
 //
-// Keywords are accent-free and lowercase (ES + EN). A trailing '*' matches as a prefix.
+// Keywords are accent-free and lowercase (ES + EN). A trailing '*' matches as a prefix; a RegExp is
+// used as is, for the rare keyword that needs an exception.
 
 import { normalize } from './tokens.js';
 
@@ -40,7 +41,8 @@ export const NBA_PLAYERS = [
   'lebron', 'stephen curry', 'steph curry', 'luka doncic', 'doncic', 'jokic', 'antetokounmpo', 'giannis', 'wembanyama',
   'wemby', 'jayson tatum', 'embiid', 'kevin durant', 'gilgeous-alexander', 'shai gilgeous', 'anthony edwards',
   'ja morant', 'kawhi leonard', 'jimmy butler', 'devin booker', 'jalen brunson', 'tyrese haliburton', 'santi aldama',
-  'hugo gonzalez', 'cooper flagg', 'nikola jokic', 'paolo banchero', 'trae young', 'donovan mitchell',
+  /(?<![a-z0-9ñ])hugo gonzalez(?! de oliveira)(?![a-z0-9ñ])/, // not the swimmer Hugo González de Oliveira
+  'cooper flagg', 'nikola jokic', 'paolo banchero', 'trae young', 'donovan mitchell',
 ];
 
 export const KEYWORDS = {
@@ -110,7 +112,7 @@ const B = '(?<![a-z0-9ñ])';
 const E = '(?![a-z0-9ñ])';
 
 export function compileKeywords(words) {
-  return words.map((w) => (w.endsWith('*') ? new RegExp(`${B}${escape(w.slice(0, -1))}`) : new RegExp(`${B}${escape(w)}${E}`)));
+  return words.map((w) => (w instanceof RegExp ? w : w.endsWith('*') ? new RegExp(`${B}${escape(w.slice(0, -1))}`) : new RegExp(`${B}${escape(w)}${E}`)));
 }
 
 const COMPILED = Object.fromEntries(Object.entries(KEYWORDS).map(([k, words]) => [k, compileKeywords(words)]));

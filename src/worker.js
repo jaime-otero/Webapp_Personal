@@ -1,6 +1,6 @@
 // Serves the static site (web/) and a tiny API to sync a profile between devices:
 //   GET /api/profile/:code   → the stored profile (404 if none)
-//   PUT /api/profile/:code   → store it (JSON, max 256 KB)
+//   PUT /api/profile/:code   → store it (JSON, max 1 MB)
 // The code is a random 128-bit id generated in the browser; whoever knows it can read and
 // write that profile, nothing else. Profiles hold reading preferences, no personal data.
 //
@@ -10,7 +10,7 @@
 // their profile follows them to any device where they log in. Without INVITES the site is open.
 
 const CODE_RE = /^[a-f0-9]{32}$/;
-const MAX_BYTES = 256 * 1024;
+const MAX_BYTES = 1024 * 1024; // a heavy profile (2 × 300 saved stories + the model) is ~600 KB
 const COOKIE = 'md_session';
 const COOKIE_MAX_AGE = 400 * 86400; // the longest browsers keep a cookie
 const PUBLIC = /^\/(sw\.js|manifest\.webmanifest|icons\/.*)$/; // reachable without logging in
@@ -51,7 +51,7 @@ async function currentUser(request, invites) {
   if (!token) return null;
   let name;
   try {
-    name = decodeURIComponent(token.slice(0, token.indexOf('.')));
+    name = decodeURIComponent(token.slice(0, token.lastIndexOf('.'))); // names may contain dots
   } catch {
     return null;
   }

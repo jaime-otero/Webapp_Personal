@@ -30,10 +30,12 @@ function toast(text) {
 }
 
 // prefs = an explicit preference changed (decides which copy wins when syncing).
+// sync = a change other devices should get; it stays pending (sync.dirty) until a push succeeds.
 function persist({ prefs = false, sync = true } = {}) {
   const now = Date.now();
   state.profile.updatedAt = now;
   if (prefs) state.profile.prefsAt = now;
+  if (sync) state.profile.sync.dirty = now;
   saveProfile(state.profile);
   if (sync) scheduleSync();
 }
@@ -75,7 +77,7 @@ async function loadData() {
   if (!state.profile.onboarded && !location.hash.startsWith('#sync=')) openOnboarding();
 }
 
-const goLogin = () => location.assign(`/login?next=${encodeURIComponent(location.pathname)}`);
+const goLogin = () => location.assign(`/login?next=${encodeURIComponent(location.pathname + location.hash)}`);
 
 // With login enabled, the account's own sync code replaces any device link: the profile is
 // merged into the account and follows the person to every device where they log in.
@@ -94,9 +96,12 @@ async function initAccount() {
   state.profile.sync = { code, lastPull: 0, lastPush: 0 };
   saveProfile(state.profile);
   const pulled = await pull();
-  if (pulled) state.profile.onboarded = true;
+  if (pulled) {
+    // The account already has a profile: no need for the welcome questions on this device.
+    state.profile.onboarded = true;
+    document.getElementById('onboarding').close?.();
+  }
   persist({ sync: false });
-  document.getElementById('onboarding').close?.();
   return pulled;
 }
 
@@ -134,6 +139,7 @@ async function checkForUpdate() {
 function showNewEdition() {
   if (document.getElementById('new-edition')) return;
   const btn = Object.assign(document.createElement('button'), { id: 'new-edition', className: 'new-edition', textContent: 'Hay noticias nuevas · Actualizar' });
+  btn.style.top = `${document.querySelector('.top').offsetHeight + 8}px`; // below the tabs and subtabs
   btn.addEventListener('click', async () => {
     btn.disabled = true;
     try {
@@ -204,7 +210,7 @@ function storyCard(entry) {
   const read = p.read[story.id] ? ' read' : '';
 
   if (p.spoilers.nba && !state.revealed.has(story.id) && isSpoiler(story, p.spoilers.extra)) {
-    return `<article class="card spoiler" data-id="${story.id}">
+    return `<article class="card spoiler" data-id="${esc(story.id)}">
       <div class="body">
         <p class="meta"><strong>${esc(first.source)}</strong> · ${timeAgo(story.publishedAt)} <span class="chip">NBA</span></p>
         <p class="spoiler-msg">🙈 Posible spoiler de la NBA</p>
@@ -227,14 +233,14 @@ function storyCard(entry) {
       : '';
   const others = rest.length
     ? `<details class="others"><summary>${rest.length === 1 ? 'También en 1 medio más' : `También en ${rest.length} medios más`}</summary><ul>${rest
-        .map((s) => `<li><a href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener" data-open="${story.id}"><strong>${esc(s.source)}</strong> · ${esc(s.title)}</a></li>`)
+        .map((s) => `<li><a href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener" data-open="${esc(story.id)}"><strong>${esc(s.source)}</strong> · ${esc(s.title)}</a></li>`)
         .join('')}</ul></details>`
     : '';
-  return `<article class="card${read}" data-id="${story.id}">
+  return `<article class="card${read}" data-id="${esc(story.id)}">
     ${story.image ? `<img class="thumb" src="${esc(safeUrl(story.image))}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
     <div class="body">
       <p class="meta"><strong>${esc(first.source)}</strong>${rest.length ? ` <span class="coverage">+${rest.length}</span>` : ''} · ${timeAgo(story.publishedAt)} ${chipsFor(story)}</p>
-      <h2><a href="${esc(safeUrl(first.url))}" target="_blank" rel="noopener" data-open="${story.id}">${esc(story.title)}</a></h2>
+      <h2><a href="${esc(safeUrl(first.url))}" target="_blank" rel="noopener" data-open="${esc(story.id)}">${esc(story.title)}</a></h2>
       ${text}
       ${why}
       ${others}
@@ -535,7 +541,14 @@ $main.addEventListener('change', (e) => {
     if (el.value === '') delete p.sections[el.dataset.section];
     else p.sections[el.dataset.section] = Number(el.value);
   } else if (el.dataset.source) for (const id of el.dataset.source.split(',')) p.sources[id] = Number(el.value);
-  else if (el.dataset.lang) p.langs = [...document.querySelectorAll('[data-lang]')].filter((c) => c.checked).map((c) => c.dataset.lang);
+  else if (el.dataset.lang) {
+    const langs = [...document.querySelectorAll('[data-lang]')].filter((c) => c.checked).map((c) => c.dataset.lang);
+    if (!langs.length) {
+      el.checked = true;
+      return toast('Deja al menos un idioma');
+    }
+    p.langs = langs;
+  }
   else if (el.dataset.kw) p[el.dataset.kw] = el.value.split('\n').map((s) => s.trim()).filter(Boolean);
   else if ('spoilers' in el.dataset) p.spoilers.nba = el.checked;
   else if ('spoilerWords' in el.dataset) p.spoilers.extra = el.value.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -585,7 +598,8 @@ function observeCards() {
     },
     { threshold: 0.6 },
   );
-  document.querySelectorAll('.card[data-id]').forEach((c, i) => i < 20 && observer.observe(c));
+  // Covered spoilers are left out: a card that cannot be read is not a story you chose to skip.
+  document.querySelectorAll('.card[data-id]:not(.spoiler)').forEach((c, i) => i < 20 && observer.observe(c));
 }
 
 // Seen near the top in 3 different visits and never opened → mild "not for me" for its section/outlet.
@@ -608,6 +622,7 @@ function markSeen(id) {
 // ---------- sync between devices ----------
 
 const API = (code) => `api/profile/${code}`;
+const KEEPALIVE_MAX = 60_000; // browsers drop keepalive requests over 64 KB
 const syncLink = () => `${location.origin}${location.pathname}#sync=${state.profile.sync.code}`;
 let pushTimer;
 let pushPending = false;
@@ -631,11 +646,16 @@ async function push({ keepalive = false } = {}) {
   if (!p.sync.code) return;
   clearTimeout(pushTimer);
   pushPending = false;
+  const dirty = p.sync.dirty;
+  const body = JSON.stringify(toRemote(p));
   try {
-    const res = await fetch(API(p.sync.code), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(toRemote(p)), keepalive });
+    keepalive &&= new TextEncoder().encode(body).length < KEEPALIVE_MAX;
+    const res = await fetch(API(p.sync.code), { method: 'PUT', headers: { 'content-type': 'application/json' }, body, keepalive });
     if (!res.ok) throw new Error(res.status);
-    p.sync.lastPush = Date.now();
-    saveProfile(p);
+    const { sync } = state.profile;
+    sync.lastPush = Date.now();
+    if (sync.dirty === dirty) sync.dirty = false; // nothing new while uploading
+    saveProfile(state.profile);
   } catch {
     pushPending = true;
   }
@@ -652,12 +672,16 @@ async function pull() {
     }
     if (!res.ok) throw new Error(res.status);
     const remote = await res.json();
-    const merged = mergeProfiles(p, remote);
-    merged.sync = { ...p.sync, lastPull: Date.now() };
-    merged.seen = p.seen;
+    // Merge into the current copy: the person may have changed something while this was loading.
+    const local = state.profile;
+    const merged = mergeProfiles(local, remote);
+    merged.sync = { ...local.sync, lastPull: Date.now() };
+    merged.seen = local.seen;
     state.profile = merged;
     saveProfile(merged);
-    await push();
+    // Upload only when this device has changes the server lacks: a PUT on every pull would spend
+    // the free KV quota (1,000 writes a day). Older profiles have no flag yet and push once.
+    if (merged.sync.dirty !== false) await push();
     return true;
   } catch {
     return false;
@@ -687,7 +711,7 @@ async function syncAction(act) {
     navigator.share({ title: 'Mi Diario: sincronizar', url: syncLink() }).catch(() => {});
     return;
   } else if (act === 'sync-now') {
-    toast((await pull()) ? 'Sincronizado' : 'No se ha podido sincronizar');
+    toast((await pull()) && !pushPending ? 'Sincronizado' : 'No se ha podido sincronizar');
   }
   render();
 }
@@ -696,6 +720,11 @@ async function syncAction(act) {
 async function linkSync(code) {
   history.replaceState(null, '', location.pathname + '#/');
   state.route = { view: 'foryou' };
+  if (state.account?.name) {
+    // With login the account already syncs every device; a device link would replace it.
+    toast('Ya sincronizas con tu cuenta: no hace falta el enlace');
+    return render();
+  }
   if (!/^[a-f0-9]{32}$/.test(code)) return toast('Enlace de sincronización no válido');
   state.profile.sync = { code, lastPull: 0, lastPush: 0 };
   saveProfile(state.profile);
@@ -813,10 +842,6 @@ function openOnboarding() {
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 state.route = parseRoute();
-if (location.hash.startsWith('#sync=')) {
-  loadData().then(() => linkSync(location.hash.slice(6)));
-} else {
-  Promise.all([loadData(), initAccount()])
-    .then(([, pulled]) => pulled || pull())
-    .then((changed) => changed && render());
-}
+const boot = Promise.all([loadData(), initAccount()]);
+if (location.hash.startsWith('#sync=')) boot.then(() => linkSync(location.hash.slice(6)));
+else boot.then(([, pulled]) => pulled || pull()).then((changed) => changed && render());
