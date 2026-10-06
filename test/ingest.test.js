@@ -173,6 +173,6 @@ test('parseFeed decodes entities in URLs, skips tracking pixels and drops "Leer"
   assert.equal(a.url, 'https://ex.com/a?at_medium=RSS&at_campaign=rss');
   assert.equal(a.image, 'https://ex.com/a.jpg?width=140&quality=85');
   assert.equal(a.summary, 'Los Lakers ganan a los Kings');
-  const [b] = parseFeed(xml.replace('ganan a los Kings Leer', 'Un plan para aprender a leer'), src);
+  const [b] = parseFeed(xml.replace('Los Lakers ganan a los Kings Leer', 'Un plan para aprender a leer'), src);
   assert.equal(b.summary, 'Un plan para aprender a leer');
 });
