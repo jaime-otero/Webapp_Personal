@@ -27,6 +27,7 @@ Navegador (web/)
 | `sources.json` | Medios y feeds, cada uno con su sección por defecto (añadir/quitar fuentes aquí) |
 | `web/lib/taxonomy.js` | Secciones, subsecciones y palabras clave para clasificar |
 | `web/lib/spoilers.js` | Detector de resultados de la NBA |
+| `scripts/ci/freshness.js` | Edad de la última edición (la usan *Actualizar noticias* y *Vigilar noticias*) |
 | `src/worker.js` | Worker: sirve la web y guarda el perfil sincronizado (KV) |
 | `scripts/ingest/` | Descarga, parseo, clasificación, agrupación y resúmenes IA (`jobs.js` decide qué noticias van a cada llamada; `embed.js`, los embeddings; `prototypes.js`, los prototipos de sección) |
 | `scripts/eval/` | Pares de titulares reales etiquetados y `cluster-eval.js`, que mide la agrupación (`npm run eval:cluster`) |
@@ -64,8 +65,10 @@ La primera vez, `npm run ingest` descarga el modelo de embeddings (~130 MB) a `.
 4. El workflow *Actualizar noticias* se ejecuta cada 30 min de 7:00 a 1:00 (hora de España, en verano) y dos veces de madrugada, en cada push a `main` y a mano desde *Actions → Actualizar noticias → Run workflow*. Quien lo lanza a su hora es el **cron del Worker** de Cloudflare (el de GitHub se retrasa horas o no llega a ejecutarse; queda de reserva y no hace nada si la edición tiene menos de 20 min). Para activarlo:
    - En GitHub, *Settings (de tu cuenta) → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token*: solo este repositorio, permiso **Actions: Read and write**, la caducidad que quieras.
    - En Cloudflare, *Workers & Pages → mi-diario → Settings → Variables and Secrets → Add*, tipo **Secret**, nombre `GITHUB_DISPATCH_TOKEN` y el token como valor. En una copia, cambia también `GITHUB_REPO` en `wrangler.jsonc` (y añade ahí `GITHUB_BRANCH` si tu rama principal no se llama `main`).
+   - El Worker reintenta si GitHub falla (5xx o red) y deja en sus logs (*Workers & Pages → mi-diario → Logs*) cada lanzamiento y cada error. Un `GitHub dispatch 401/403/404` significa que el token caducó o perdió el permiso: crea otro y actualiza el secreto. Apunta la fecha de caducidad en tu calendario.
    - Sin ese secreto todo funciona igual, pero solo con el cron de GitHub. Los resúmenes IA se regeneran cada 2 h; en las ejecuciones intermedias entran noticias nuevas y se conservan los resúmenes anteriores. Con la web abierta, cada 10 min comprueba `data/meta.json` y, si hay edición nueva, muestra el botón "Hay noticias nuevas · Actualizar".
-5. Abre la web en el móvil → menú del navegador → **"Añadir a pantalla de inicio" / "Instalar app"**.
+5. **Aviso si las noticias se paran (recomendado):** en *Settings → Secrets and variables → Actions → Variables* crea `SITE_URL` con la dirección de tu web (p. ej. `https://mi-diario.TU-SUBDOMINIO.workers.dev`). El workflow *Vigilar noticias* mira cada hora (de 6 a 22 h UTC) la fecha de `data/meta.json` (público aunque haya login: solo lleva la fecha y el número de noticias) y, si la última edición tiene más de 90 min, abre un issue "⚠️ Las noticias no se actualizan" (te llega por correo); lo cierra solo cuando vuelve a haber ediciones. Con `SITE_URL`, el cron de reserva de *Actualizar noticias* también decide con esa fecha si hay algo que hacer, antes de instalar nada.
+6. Abre la web en el móvil → menú del navegador → **"Añadir a pantalla de inicio" / "Instalar app"**.
 
 ### Solo para quien invites (inicio de sesión)
 
