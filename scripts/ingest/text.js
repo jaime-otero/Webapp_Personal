@@ -10,7 +10,7 @@ export function decodeEntities(s) {
   return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
     if (e[0] === '#') {
       const code = e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+      return code <= 0x10ffff ? String.fromCodePoint(code) : m; // a bogus &#99999999; must not drop the feed
     }
     if (ENTITIES[e.toLowerCase()]) return ENTITIES[e.toLowerCase()];
     const acc = e.match(/^([a-z])(acute|grave|tilde|uml|circ|cedil)$/i);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultProfile, migrate, mergeProfiles, setFlag, isOn, listOf, toRemote, pruneProfile, orderedSections, moveSection } from '../web/lib/profile.js';
+import { defaultProfile, migrate, mergeProfiles, setFlag, isOn, listOf, toRemote, pruneProfile, orderedSections, moveSection, snapshot } from '../web/lib/profile.js';
 import { train } from '../web/lib/rank.js';
 
 const story = (id, title = 'Algo') => ({ id, title, sections: ['ciencia'], lang: 'es', sources: [{ sourceId: 'x', source: 'X', url: 'https://x', title }] });
@@ -83,4 +83,13 @@ test('the section order syncs with the other explicit preferences', () => {
   assert.deepEqual(mergeProfiles({ ...local, prefsAt: 30 }, remote).order, {});
   const { order, ...old } = defaultProfile(1);
   assert.deepEqual(migrate(old).order, {});
+});
+
+test('story snapshots stay small so the synced profile fits the server limit', () => {
+  const sources = Array.from({ length: 5 }, (_, i) => ({ title: `Titular ${i}`, url: `https://m${i}.es/x`, source: `M${i}`, sourceId: `m${i}`, publishedAt: '2026-10-06T10:00:00Z' }));
+  const snap = snapshot({ ...story('a'), summary: 'x'.repeat(240), aiSummary: 'Resumen IA.', sources });
+  assert.equal(snap.summary, '');
+  assert.equal(snap.aiSummary, 'Resumen IA.');
+  assert.deepEqual(snap.sources.map((s) => Object.keys(s).sort()), [['source', 'sourceId', 'title', 'url'], ['source', 'sourceId', 'title', 'url']]);
+  assert.equal(snapshot({ ...story('b'), summary: 'Extracto.' }).summary, 'Extracto.');
 });

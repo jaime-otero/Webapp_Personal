@@ -84,10 +84,12 @@ export function saveProfile(profile) {
   }
 }
 
-// Small copy of a story, enough to show it in Me gusta / Guardados after it leaves the feed.
+// Small copy of a story, enough to show it in Me gusta / Guardados after it leaves the feed. Kept
+// lean (one text, two outlets): the synced profile holds up to 2 × MAX_SNAPSHOTS of them.
 export function snapshot(story) {
   const { id, title, summary, aiSummary, image, lang, sections, publishedAt } = story;
-  return { id, title, summary, aiSummary, image, lang, sections: sections ?? [], publishedAt, sources: (story.sources ?? []).slice(0, 4) };
+  const sources = (story.sources ?? []).slice(0, 2).map(({ title, url, source, sourceId }) => ({ title, url, source, sourceId }));
+  return { id, title, summary: aiSummary ? '' : summary, aiSummary, image, lang, sections: sections ?? [], publishedAt, sources };
 }
 
 export const isOn = (map, id) => !!map[id] && !map[id].x;

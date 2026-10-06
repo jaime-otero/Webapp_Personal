@@ -66,7 +66,6 @@ export function parseFeed(xml, source) {
       sourceId: source.id,
       source: source.name,
       lang: source.lang,
-      region: source.region,
       publishedAt: pickDate(item),
       image: pickImage(item),
       categories,

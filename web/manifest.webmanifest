@@ -1,4 +1,5 @@
 {
+  "id": "./",
   "name": "Mi Diario",
   "short_name": "Mi Diario",
   "description": "Noticias de medios fiables, ordenadas según tus intereses.",
@@ -7,7 +8,7 @@
   "scope": "./",
   "display": "standalone",
   "background_color": "#fbfaf7",
-  "theme_color": "#b4381e",
+  "theme_color": "#fbfaf7",
   "icons": [
     {
       "src": "icons/icon-192.png",
