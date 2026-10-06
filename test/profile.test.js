@@ -93,3 +93,12 @@ test('story snapshots stay small so the synced profile fits the server limit', (
   assert.deepEqual(snap.sources.map((s) => Object.keys(s).sort()), [['source', 'sourceId', 'title', 'url'], ['source', 'sourceId', 'title', 'url']]);
   assert.equal(snapshot({ ...story('b'), summary: 'Extracto.' }).summary, 'Extracto.');
 });
+
+test('a fresh device never overwrites the account preferences with its defaults', () => {
+  const account = { ...defaultProfile(1000), sections: { economia: -2 }, order: { '': ['ciencia'] }, prefsAt: 2000 };
+  const fresh = defaultProfile(5000); // a new device, created after the account was set up
+  const m = mergeProfiles(fresh, account);
+  assert.deepEqual(m.sections, { economia: -2 });
+  assert.deepEqual(m.order, { '': ['ciencia'] });
+  assert.equal(m.prefsAt, 2000);
+});
