@@ -99,6 +99,33 @@ test('with INVITES: login, cookie session, account sync code and revocation', as
   assert.match(out.headers.get('set-cookie'), /Max-Age=0/);
 });
 
+test('login locks an IP after 5 failures, and only failures write KV', async () => {
+  const e = { ...env(), INVITES: 'ana:clave-ana' };
+  const post = (code, ip = '1.2.3.4') => req('/login', { method: 'POST', headers: { 'cf-connecting-ip': ip }, body: new URLSearchParams({ code }) });
+
+  assert.equal((await worker.fetch(post('Clave-Ana'), e)).status, 303);
+  assert.equal(e.store.size, 0); // success never writes
+
+  for (let i = 0; i < 4; i++) assert.equal((await worker.fetch(post('mala'), e)).status, 401);
+  assert.equal(e.store.size, 1);
+  assert.equal((await worker.fetch(post('clave-ana'), e)).status, 303); // below the limit still works
+  assert.equal((await worker.fetch(post('mala'), e)).status, 401); // 5th failure
+
+  const locked = await worker.fetch(post('clave-ana'), e);
+  assert.equal(locked.status, 429);
+  assert.match(await locked.text(), /Demasiados intentos, espera unos minutos\./);
+  assert.ok(Number(locked.headers.get('retry-after')) > 0);
+  assert.equal((await worker.fetch(post('clave-ana', '5.6.7.8'), e)).status, 303); // other IPs unaffected
+});
+
+test('login fails open when KV is missing or erroring', async () => {
+  const body = () => ({ method: 'POST', body: new URLSearchParams({ code: 'clave-ana' }) });
+  const broken = { INVITES: 'ana:clave-ana', ASSETS: {}, PROFILES: { get: async () => { throw new Error('kv'); }, put: async () => { throw new Error('kv'); } } };
+  assert.equal((await worker.fetch(req('/login', body()), broken)).status, 303);
+  assert.equal((await worker.fetch(req('/login', { ...body(), body: new URLSearchParams({ code: 'x' }) }), broken)).status, 401);
+  assert.equal((await worker.fetch(req('/login', body()), { INVITES: 'ana:clave-ana' })).status, 303);
+});
+
 test('plans news updates every 30 min with AI on the even hours', () => {
   const at = (hm) => planRun(new Date(`2026-10-05T${hm}:00Z`));
   assert.deepEqual(at('05:17'), { ai: false });

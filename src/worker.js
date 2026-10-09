@@ -65,7 +65,7 @@ async function currentUser(request, invites) {
 const safeNext = (next) => (typeof next === 'string' && next.startsWith('/') && !next.startsWith('//') ? next : '/');
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-function loginPage(next, error = '') {
+function loginPage(next, error = '', status = error ? 401 : 200, extra = {}) {
   const html = `<!doctype html>
 <html lang="es">
 <head>
@@ -98,17 +98,64 @@ function loginPage(next, error = '') {
 </form>
 </body>
 </html>`;
-  return new Response(html, { status: error ? 401 : 200, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  return new Response(html, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...extra } });
 }
 
-async function login(request, url, invites) {
+// Brute-force limit per client IP. KV allows few writes a day, so only failed attempts write.
+const MAX_FAILS = 5;
+const FAIL_WINDOW = 15 * 60; // seconds
+const failKey = (request) => `rl:${request.headers.get('cf-connecting-ip') ?? 'unknown'}`;
+
+// Seconds until this IP may try again (0 = not locked). Fails open if KV is unavailable.
+async function lockedFor(env, key) {
+  try {
+    const [n, start] = String(await env.PROFILES.get(key) ?? '').split(':').map(Number);
+    return n >= MAX_FAILS ? Math.max(1, start + FAIL_WINDOW - Math.floor(Date.now() / 1000)) : 0;
+  } catch (err) {
+    console.error('login rate limit read failed', err);
+    return 0;
+  }
+}
+
+async function recordFail(env, key) {
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    let [n, start] = String(await env.PROFILES.get(key) ?? '').split(':').map(Number);
+    if (!(n > 0) || !(start + FAIL_WINDOW > now)) [n, start] = [0, now];
+    const ttl = Math.max(60, start + FAIL_WINDOW - now); // KV minimum TTL is 60 s
+    await env.PROFILES.put(key, `${n + 1}:${start}`, { expirationTtl: ttl });
+  } catch (err) {
+    console.error('login rate limit write failed', err);
+  }
+}
+
+// Case-insensitive, constant-time lookup: compare digests and never stop at the first match.
+async function findInvite(invites, typed) {
+  const want = await hmac('login', typed);
+  let found;
+  for (const [name, code] of invites) {
+    const got = await hmac('login', code.toLowerCase());
+    let diff = 0;
+    for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ got.charCodeAt(i);
+    if (diff === 0) found = [name, code];
+  }
+  return found ?? [];
+}
+
+async function login(request, url, invites, env) {
   if (request.method === 'GET') return loginPage(safeNext(url.searchParams.get('next')));
   if (request.method !== 'POST') return json({ error: 'method not allowed' }, 405);
+  const key = failKey(request);
+  const wait = await lockedFor(env, key);
+  if (wait) return loginPage('/', 'Demasiados intentos, espera unos minutos.', 429, { 'retry-after': String(wait) });
   const form = await request.formData();
   const next = safeNext(form.get('next'));
   const typed = String(form.get('code') ?? '').trim().toLowerCase(); // phones capitalise the first letter
-  const [name, code] = [...invites].find(([, c]) => c.toLowerCase() === typed) ?? [];
-  if (!typed || !name) return loginPage(next, 'Código incorrecto.');
+  const [name, code] = await findInvite(invites, typed);
+  if (!typed || !name) {
+    await recordFail(env, key);
+    return loginPage(next, 'Código incorrecto.');
+  }
   const cookie = `${COOKIE}=${await sessionToken(name, code)}; Path=/; Max-Age=${COOKIE_MAX_AGE}; HttpOnly; Secure; SameSite=Lax`;
   return new Response(null, { status: 303, headers: { location: next, 'set-cookie': cookie } });
 }
@@ -261,7 +308,7 @@ export default {
     let user = null;
 
     if (invites.size) {
-      if (url.pathname === '/login') return login(request, url, invites);
+      if (url.pathname === '/login') return login(request, url, invites, env);
       if (url.pathname === '/logout') return logout();
       user = await currentUser(request, invites);
       if (!user && !PUBLIC.test(url.pathname)) {
