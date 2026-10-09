@@ -213,7 +213,8 @@ export async function dispatchUpdate(env, scheduledTime, { retryDelayMs = 1000 }
 // of the day has had time to land) it reads the published data/meta.json and, if the edition is
 // older than STALE_MINUTES, sends ONE push through ntfy.sh (set the NTFY_TOPIC variable, install the
 // ntfy app and subscribe to that topic); another one when the news come back. The state is kept
-// in KV and written only when it changes (KV allows 1,000 writes a day).
+// in KV and written only when it changes (KV allows 1,000 writes a day), and only after the push
+// went out, so a failed push is retried on the next tick.
 export const STALE_MINUTES = 90;
 
 async function notify(env, message) {
@@ -224,7 +225,7 @@ async function notify(env, message) {
     headers: { title: 'Mi Diario', tags: 'newspaper' },
     body: message,
   });
-  if (!res.ok) console.error(`ntfy ${res.status}`);
+  if (!res.ok) throw new Error(`ntfy ${res.status}`);
 }
 
 export async function watchFreshness(env, scheduledTime) {
@@ -239,11 +240,11 @@ export async function watchFreshness(env, scheduledTime) {
   if (age === null) return console.error('watchdog: cannot read data/meta.json');
   const wasStale = (await env.PROFILES.get('watch:state')) === 'stale';
   if (age > STALE_MINUTES && !wasStale) {
-    await env.PROFILES.put('watch:state', 'stale');
     await notify(env, `⚠️ Las noticias no se actualizan: la última edición es de hace ${age} min.`);
+    await env.PROFILES.put('watch:state', 'stale');
   } else if (age <= STALE_MINUTES && wasStale) {
-    await env.PROFILES.put('watch:state', 'ok');
     await notify(env, '✅ Las noticias vuelven a actualizarse.');
+    await env.PROFILES.put('watch:state', 'ok');
   }
 }
 

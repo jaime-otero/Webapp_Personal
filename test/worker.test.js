@@ -206,3 +206,34 @@ test('the watchdog alerts once when the edition goes stale and once when it reco
     console.error = realErr;
   }
 });
+
+test('the watchdog keeps its state when the push fails, so the next tick retries', async () => {
+  const realFetch = globalThis.fetch;
+  const realErr = console.error;
+  console.error = () => {};
+  let pushes = 0;
+  let mode = 'reject';
+  globalThis.fetch = async () => {
+    pushes++;
+    if (mode === 'reject') throw new Error('network down');
+    return new Response(null, { status: mode === 'http500' ? 500 : 200 });
+  };
+  const now = Date.parse('2026-10-05T12:17:00Z');
+  const e = env();
+  e.NTFY_TOPIC = 'mi-tema';
+  e.ASSETS = { fetch: async () => Response.json({ generatedAt: new Date(now - 150 * 60e3).toISOString() }) };
+  try {
+    await assert.rejects(watchFreshness(e, now), /network down/);
+    assert.equal(e.store.get('watch:state'), undefined);
+    mode = 'http500';
+    await assert.rejects(watchFreshness(e, now + 30 * 60e3), /ntfy 500/);
+    assert.equal(e.store.get('watch:state'), undefined);
+    mode = 'ok';
+    await watchFreshness(e, now + 60 * 60e3);
+    assert.equal(pushes, 3);
+    assert.equal(e.store.get('watch:state'), 'stale');
+  } finally {
+    globalThis.fetch = realFetch;
+    console.error = realErr;
+  }
+});
