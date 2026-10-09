@@ -128,8 +128,9 @@ async function profileApi(request, env, url) {
     return stored ? new Response(stored, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }) : json({ error: 'not found' }, 404);
   }
   if (request.method === 'PUT') {
+    if (Number(request.headers.get('content-length')) > MAX_BYTES) return json({ error: 'too large' }, 413);
     const body = await request.text();
-    if (body.length > MAX_BYTES) return json({ error: 'too large' }, 413);
+    if (new TextEncoder().encode(body).byteLength > MAX_BYTES) return json({ error: 'too large' }, 413); // bytes, not UTF-16 chars
     try {
       const parsed = JSON.parse(body);
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error();
