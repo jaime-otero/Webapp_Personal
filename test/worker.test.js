@@ -22,6 +22,17 @@ test('stores and returns a profile by code', async () => {
   assert.deepEqual(await got.json(), { v: 2, sections: { eeuu: 3 } });
 });
 
+test('size limit counts UTF-8 bytes, not characters', async () => {
+  const e = env();
+  const put = (x) => worker.fetch(req(`/api/profile/${CODE}`, { method: 'PUT', body: JSON.stringify({ x }) }), e);
+  assert.equal((await put('€'.repeat(400_000))).status, 413); // 400k chars but 1.2 MB
+  assert.equal(e.store.size, 0);
+  assert.equal((await put('€'.repeat(340_000))).status, 200); // ~1.02 MB, just under the limit
+  assert.equal(e.store.size, 1);
+  const big = { method: 'PUT', body: '{}', headers: { 'content-length': '2000000' } };
+  assert.equal((await worker.fetch(req(`/api/profile/${CODE}`, big), e)).status, 413); // rejected from the header
+});
+
 test('rejects bad codes, invalid JSON and oversized bodies; other paths are assets', async () => {
   const e = env();
   assert.equal((await worker.fetch(req('/api/profile/short'), e)).status, 404);
