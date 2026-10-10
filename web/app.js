@@ -60,6 +60,46 @@ window.addEventListener('hashchange', () => {
   window.scrollTo({ top: 0 });
 });
 
+// Desktop: the tab bars hide their scrollbar, so let the mouse wheel and a click-drag scroll them sideways.
+function scrollableSideways(bar) {
+  bar.addEventListener(
+    'wheel',
+    (e) => {
+      if (e.ctrlKey || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return; // trackpads already scroll sideways
+      const max = bar.scrollWidth - bar.clientWidth;
+      if (max <= 0 || (e.deltaY < 0 && bar.scrollLeft <= 0) || (e.deltaY > 0 && bar.scrollLeft >= max - 1)) return;
+      e.preventDefault();
+      bar.scrollLeft += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    },
+    { passive: false },
+  );
+  let drag = null;
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button === 0) drag = { x: e.clientX, left: bar.scrollLeft, moved: false };
+  });
+  bar.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    if (!drag.moved && Math.abs(dx) < 5) return;
+    if (!drag.moved) bar.setPointerCapture(e.pointerId);
+    drag.moved = true;
+    bar.scrollLeft = drag.left - dx;
+  });
+  let suppressClickUntil = 0;
+  bar.addEventListener('click', (e) => {
+    if (performance.now() < suppressClickUntil) e.preventDefault(); // a drag isn't a tap on the tab under the cursor
+  }, true);
+  const end = () => {
+    if (drag?.moved) suppressClickUntil = performance.now() + 100;
+    drag = null;
+  };
+  bar.addEventListener('pointerup', end);
+  bar.addEventListener('pointercancel', () => (drag = null));
+  bar.addEventListener('dragstart', (e) => e.preventDefault()); // links would otherwise start a native drag
+}
+scrollableSideways($tabs);
+scrollableSideways($subtabs);
+
 // ---------- data ----------
 
 async function loadData() {
