@@ -22,6 +22,17 @@ test('stores and returns a profile by code', async () => {
   assert.deepEqual(await got.json(), { v: 2, sections: { eeuu: 3 } });
 });
 
+test('size limit counts UTF-8 bytes, not characters', async () => {
+  const e = env();
+  const put = (x) => worker.fetch(req(`/api/profile/${CODE}`, { method: 'PUT', body: JSON.stringify({ x }) }), e);
+  assert.equal((await put('€'.repeat(400_000))).status, 413); // 400k chars but 1.2 MB
+  assert.equal(e.store.size, 0);
+  assert.equal((await put('€'.repeat(340_000))).status, 200); // ~1.02 MB, just under the limit
+  assert.equal(e.store.size, 1);
+  const big = { method: 'PUT', body: '{}', headers: { 'content-length': '2000000' } };
+  assert.equal((await worker.fetch(req(`/api/profile/${CODE}`, big), e)).status, 413); // rejected from the header
+});
+
 test('rejects bad codes, invalid JSON and oversized bodies; other paths are assets', async () => {
   const e = env();
   assert.equal((await worker.fetch(req('/api/profile/short'), e)).status, 404);
@@ -86,6 +97,33 @@ test('with INVITES: login, cookie session, account sync code and revocation', as
 
   const out = await worker.fetch(req('/logout', authed), e);
   assert.match(out.headers.get('set-cookie'), /Max-Age=0/);
+});
+
+test('login locks an IP after 5 failures, and only failures write KV', async () => {
+  const e = { ...env(), INVITES: 'ana:clave-ana' };
+  const post = (code, ip = '1.2.3.4') => req('/login', { method: 'POST', headers: { 'cf-connecting-ip': ip }, body: new URLSearchParams({ code }) });
+
+  assert.equal((await worker.fetch(post('Clave-Ana'), e)).status, 303);
+  assert.equal(e.store.size, 0); // success never writes
+
+  for (let i = 0; i < 4; i++) assert.equal((await worker.fetch(post('mala'), e)).status, 401);
+  assert.equal(e.store.size, 1);
+  assert.equal((await worker.fetch(post('clave-ana'), e)).status, 303); // below the limit still works
+  assert.equal((await worker.fetch(post('mala'), e)).status, 401); // 5th failure
+
+  const locked = await worker.fetch(post('clave-ana'), e);
+  assert.equal(locked.status, 429);
+  assert.match(await locked.text(), /Demasiados intentos, espera unos minutos\./);
+  assert.ok(Number(locked.headers.get('retry-after')) > 0);
+  assert.equal((await worker.fetch(post('clave-ana', '5.6.7.8'), e)).status, 303); // other IPs unaffected
+});
+
+test('login fails open when KV is missing or erroring', async () => {
+  const body = () => ({ method: 'POST', body: new URLSearchParams({ code: 'clave-ana' }) });
+  const broken = { INVITES: 'ana:clave-ana', ASSETS: {}, PROFILES: { get: async () => { throw new Error('kv'); }, put: async () => { throw new Error('kv'); } } };
+  assert.equal((await worker.fetch(req('/login', body()), broken)).status, 303);
+  assert.equal((await worker.fetch(req('/login', { ...body(), body: new URLSearchParams({ code: 'x' }) }), broken)).status, 401);
+  assert.equal((await worker.fetch(req('/login', body()), { INVITES: 'ana:clave-ana' })).status, 303);
 });
 
 test('plans news updates every 30 min with AI on the even hours', () => {
@@ -201,6 +239,37 @@ test('the watchdog alerts once when the edition goes stale and once when it reco
     e.store.clear();
     await watchFreshness(e, now);
     assert.equal(pushes.length, 2);
+  } finally {
+    globalThis.fetch = realFetch;
+    console.error = realErr;
+  }
+});
+
+test('the watchdog keeps its state when the push fails, so the next tick retries', async () => {
+  const realFetch = globalThis.fetch;
+  const realErr = console.error;
+  console.error = () => {};
+  let pushes = 0;
+  let mode = 'reject';
+  globalThis.fetch = async () => {
+    pushes++;
+    if (mode === 'reject') throw new Error('network down');
+    return new Response(null, { status: mode === 'http500' ? 500 : 200 });
+  };
+  const now = Date.parse('2026-10-05T12:17:00Z');
+  const e = env();
+  e.NTFY_TOPIC = 'mi-tema';
+  e.ASSETS = { fetch: async () => Response.json({ generatedAt: new Date(now - 150 * 60e3).toISOString() }) };
+  try {
+    await assert.rejects(watchFreshness(e, now), /network down/);
+    assert.equal(e.store.get('watch:state'), undefined);
+    mode = 'http500';
+    await assert.rejects(watchFreshness(e, now + 30 * 60e3), /ntfy 500/);
+    assert.equal(e.store.get('watch:state'), undefined);
+    mode = 'ok';
+    await watchFreshness(e, now + 60 * 60e3);
+    assert.equal(pushes, 3);
+    assert.equal(e.store.get('watch:state'), 'stale');
   } finally {
     globalThis.fetch = realFetch;
     console.error = realErr;
